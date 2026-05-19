@@ -1,0 +1,11 @@
+const router = require('express').Router();
+const c = require('../controllers/schoolController');
+const { authenticate, authorize } = require('../middleware/auth');
+router.use(authenticate);
+router.get('/', c.getAll);
+router.get('/:id', c.getById);
+router.get('/:id/dashboard', c.getDashboard);
+router.post('/', authorize('super_admin','admin'), c.create);
+router.put('/:id', authorize('super_admin','admin'), c.update);
+router.delete('/:id', authorize('super_admin'), c.delete);
+module.exports = router;

@@ -1,0 +1,11 @@
+const router = require('express').Router();
+const c = require('../controllers/messageController');
+const { authenticate, schoolTenancy } = require('../middleware/auth');
+router.use(authenticate); router.use(schoolTenancy);
+router.get('/conversations', c.getConversations);
+router.get('/unread-count', c.getUnreadCount);
+router.get('/thread/:partnerId', c.getThread);
+router.get('/route-parents/:routeId', c.getRouteParents);
+router.post('/', c.send);
+router.post('/absence', c.reportAbsence);
+module.exports = router;

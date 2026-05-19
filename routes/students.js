@@ -1,0 +1,11 @@
+const router = require('express').Router();
+const c = require('../controllers/studentController');
+const { authenticate, authorize, schoolTenancy } = require('../middleware/auth');
+router.use(authenticate); router.use(schoolTenancy);
+router.get('/', c.getAll);
+router.get('/:id', c.getById);
+router.post('/', authorize('super_admin','admin','coordinator'), c.create);
+router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
+router.delete('/:id', authorize('super_admin','admin'), c.delete);
+router.post('/:id/assign-route', authorize('super_admin','admin','coordinator'), c.assignRoute);
+module.exports = router;

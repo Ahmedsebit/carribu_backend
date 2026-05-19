@@ -1,0 +1,11 @@
+const router = require('express').Router();
+const c = require('../controllers/tripController');
+const { authenticate, authorize, schoolTenancy } = require('../middleware/auth');
+router.use(authenticate); router.use(schoolTenancy);
+router.get('/', c.getAll);
+router.post('/', authorize('super_admin','admin','coordinator','driver'), c.create);
+router.put('/:id/start', authorize('super_admin','admin','coordinator','driver'), c.startTrip);
+router.put('/:id/end', authorize('super_admin','admin','coordinator','driver'), c.endTrip);
+router.post('/:id/log', authorize('super_admin','admin','coordinator','driver'), c.logAction);
+router.get('/:id/logs', c.getTripLogs);
+module.exports = router;

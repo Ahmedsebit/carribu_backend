@@ -1,0 +1,10 @@
+const router = require('express').Router();
+const c = require('../controllers/driverController');
+const { authenticate, authorize, schoolTenancy } = require('../middleware/auth');
+router.use(authenticate);
+router.use(authorize('super_admin','admin','coordinator','driver'));
+router.use(schoolTenancy);
+router.get('/my-routes', c.getMyRoutes);
+router.get('/my-trips', c.getMyTrips);
+router.get('/active-trip', c.getActiveTrip);
+module.exports = router;
