@@ -16,12 +16,12 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
       { schoolId:1, email:'coordinator@nairobiacademy.co.ke', passwordHash:'coord123', firstName:'Brian', lastName:'Ochieng', role:'coordinator', phone:'+254711000002' },
       { schoolId:1, email:'driver1@nairobiacademy.co.ke', passwordHash:'driver123', firstName:'Charles', lastName:'Mutua', role:'driver', phone:'+254711000003' },
       { schoolId:1, email:'driver2@nairobiacademy.co.ke', passwordHash:'driver123', firstName:'David', lastName:'Wanjiru', role:'driver', phone:'+254711000004' },
-      { schoolId:1, email:'parent1@gmail.com', passwordHash:'parent123', firstName:'Esther', lastName:'Kamau', role:'parent', phone:'+254711000005' },
-      { schoolId:1, email:'parent2@gmail.com', passwordHash:'parent123', firstName:'Francis', lastName:'Njoroge', role:'parent', phone:'+254711000006' },
-      { schoolId:1, email:'parent3@gmail.com', passwordHash:'parent123', firstName:'Grace', lastName:'Otieno', role:'parent', phone:'+254711000007' },
+      { schoolId:1, email:'parent1@gmail.com', passwordHash:'parent123', firstName:'Esther', lastName:'Kamau', role:'parent', phone:'+254711000005', pickupAddress:'Westlands, Nairobi', pickupLat:-1.2641, pickupLng:36.8053 },
+      { schoolId:1, email:'parent2@gmail.com', passwordHash:'parent123', firstName:'Francis', lastName:'Njoroge', role:'parent', phone:'+254711000006', pickupAddress:'Kilimani, Nairobi', pickupLat:-1.2888, pickupLng:36.7845 },
+      { schoolId:1, email:'parent3@gmail.com', passwordHash:'parent123', firstName:'Grace', lastName:'Otieno', role:'parent', phone:'+254711000007', pickupAddress:'South B, Nairobi', pickupLat:-1.3092, pickupLng:36.8345 },
       { schoolId:2, email:'admin@mombasainternational.co.ke', passwordHash:'admin123', firstName:'Hassan', lastName:'Ahmed', role:'admin', phone:'+254711000008' },
       { schoolId:2, email:'driver1@mombasainternational.co.ke', passwordHash:'driver123', firstName:'Ibrahim', lastName:'Said', role:'driver', phone:'+254711000009' },
-      { schoolId:2, email:'parent4@gmail.com', passwordHash:'parent123', firstName:'Jamila', lastName:'Omar', role:'parent', phone:'+254711000010' },
+      { schoolId:2, email:'parent4@gmail.com', passwordHash:'parent123', firstName:'Jamila', lastName:'Omar', role:'parent', phone:'+254711000010', pickupAddress:'Nyali, Mombasa', pickupLat:-4.0225, pickupLng:39.7103 },
       { schoolId:3, email:'admin@kisumulakeside.co.ke', passwordHash:'admin123', firstName:'Kevin', lastName:'Onyango', role:'admin', phone:'+254711000011' },
       { schoolId:3, email:'driver1@kisumulakeside.co.ke', passwordHash:'driver123', firstName:'Lilian', lastName:'Auma', role:'driver', phone:'+254711000012' },
     ], { individualHooks: true });
@@ -38,16 +38,16 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
     ]);
     console.log(`✅ ${vehicles.length} vehicles`);
     const students = await Student.bulkCreate([
-      { schoolId:1, parentId:5, firstName:'Amani', lastName:'Kamau', grade:'Grade 3', pickupAddress:'Westlands, Nairobi', pickupLat:-1.2641, pickupLng:36.8053 },
-      { schoolId:1, parentId:5, firstName:'Baraka', lastName:'Kamau', grade:'Grade 5', pickupAddress:'Westlands, Nairobi', pickupLat:-1.2641, pickupLng:36.8053 },
-      { schoolId:1, parentId:6, firstName:'Ciku', lastName:'Njoroge', grade:'Grade 2', pickupAddress:'Kilimani, Nairobi', pickupLat:-1.2888, pickupLng:36.7845 },
-      { schoolId:1, parentId:6, firstName:'Diani', lastName:'Njoroge', grade:'Grade 4', pickupAddress:'Kilimani, Nairobi', pickupLat:-1.2888, pickupLng:36.7845 },
-      { schoolId:1, parentId:7, firstName:'Erick', lastName:'Otieno', grade:'Grade 1', pickupAddress:'South B, Nairobi', pickupLat:-1.3092, pickupLng:36.8345 },
-      { schoolId:1, parentId:7, firstName:'Faith', lastName:'Otieno', grade:'Grade 6', pickupAddress:'South B, Nairobi', pickupLat:-1.3092, pickupLng:36.8345 },
-      { schoolId:2, parentId:10, firstName:'Ghali', lastName:'Omar', grade:'Grade 3', pickupAddress:'Nyali, Mombasa', pickupLat:-4.0225, pickupLng:39.7103 },
-      { schoolId:2, parentId:10, firstName:'Halima', lastName:'Omar', grade:'Grade 5', pickupAddress:'Nyali, Mombasa', pickupLat:-4.0225, pickupLng:39.7103 },
-      { schoolId:3, firstName:'Ian', lastName:'Odhiambo', grade:'Grade 2', pickupAddress:'Milimani, Kisumu', pickupLat:-0.0917, pickupLng:34.7680 },
-      { schoolId:3, firstName:'Joyce', lastName:'Adhiambo', grade:'Grade 4', pickupAddress:'Tom Mboya, Kisumu', pickupLat:-0.1022, pickupLng:34.7517 },
+      { schoolId:1, parentId:5, firstName:'Amani', lastName:'Kamau', grade:'Grade 3' },
+      { schoolId:1, parentId:5, firstName:'Baraka', lastName:'Kamau', grade:'Grade 5' },
+      { schoolId:1, parentId:6, firstName:'Ciku', lastName:'Njoroge', grade:'Grade 2' },
+      { schoolId:1, parentId:6, firstName:'Diani', lastName:'Njoroge', grade:'Grade 4' },
+      { schoolId:1, parentId:7, firstName:'Erick', lastName:'Otieno', grade:'Grade 1' },
+      { schoolId:1, parentId:7, firstName:'Faith', lastName:'Otieno', grade:'Grade 6' },
+      { schoolId:2, parentId:10, firstName:'Ghali', lastName:'Omar', grade:'Grade 3' },
+      { schoolId:2, parentId:10, firstName:'Halima', lastName:'Omar', grade:'Grade 5' },
+      { schoolId:3, firstName:'Ian', lastName:'Odhiambo', grade:'Grade 2' },
+      { schoolId:3, firstName:'Joyce', lastName:'Adhiambo', grade:'Grade 4' },
     ]);
     console.log(`✅ ${students.length} students`);
     await Route.bulkCreate([

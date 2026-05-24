@@ -6,7 +6,7 @@ exports.getAll = async (req, res) => {
     if (req.query.grade) where.grade = req.query.grade;
     if (req.query.search) where[Op.or] = [{ firstName: { [Op.iLike]: `%${req.query.search}%` } }, { lastName: { [Op.iLike]: `%${req.query.search}%` } }];
     const students = await Student.findAll({ where, include: [
-      { model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email'] },
+      { model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] },
       { model: School, as: 'school', attributes: ['id','name'] },
       { model: Route, as: 'routes', attributes: ['id','name'], through: { attributes: ['stopOrder'] } },
     ], order: [['last_name','ASC'],['first_name','ASC']] });
@@ -15,7 +15,7 @@ exports.getAll = async (req, res) => {
 };
 exports.getById = async (req, res) => {
   try {
-    const student = await Student.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email'] }, { model: Route, as: 'routes', through: { attributes: ['stopOrder'] } }] });
+    const student = await Student.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }, { model: Route, as: 'routes', through: { attributes: ['stopOrder'] } }] });
     if (!student) return res.status(404).json({ error: 'Student not found.' });
     res.json({ student });
   } catch (err) { res.status(500).json({ error: err.message }); }

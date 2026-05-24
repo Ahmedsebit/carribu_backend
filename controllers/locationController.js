@@ -16,7 +16,7 @@ exports.updateLocation = async (req, res) => {
     if (!trip) return res.status(404).json({ error: 'Active trip not found.' });
     const loc = await BusLocation.create({ tripId, vehicleId: trip.vehicleId, driverId: req.user.id, lat, lng, speed, heading, recordedAt: new Date() });
 
-    const route = await Route.findByPk(trip.routeId, { include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email'] }] }] });
+    const route = await Route.findByPk(trip.routeId, { include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] }] }] });
     if (route) {
       const logs = await TripLog.findAll({ where: { tripId }, order: [['created_at','DESC']] });
       const latestAction = logs.reduce((acc, log) => {
@@ -26,14 +26,14 @@ exports.updateLocation = async (req, res) => {
       const pendingStudents = (route.students || []).filter(s => {
         const action = latestAction[s.id];
         return action !== 'absent' && action !== 'check_out' && action !== 'check_in';
-      }).filter(s => s.pickupLat && s.pickupLng && s.parent);
+      }).filter(s => s.parent && s.parent.pickupLat && s.parent.pickupLng);
 
       // Notify parents when bus is ~5 minutes away from their child
       const DEFAULT_SPEED_KMH = 30;
       const STOP_BUFFER_MINUTES = 3;
       const speedKmh = (speed && parseFloat(speed) > 0) ? parseFloat(speed) : DEFAULT_SPEED_KMH;
       for (const student of pendingStudents) {
-        const dist = distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(student.pickupLat), parseFloat(student.pickupLng));
+        const dist = distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(student.parent.pickupLat), parseFloat(student.parent.pickupLng));
         const stopsBefore = pendingStudents.filter(s => s.RouteStudent.stopOrder < student.RouteStudent.stopOrder).length;
         const travelMin = ((dist / 1000) / speedKmh) * 60;
         const totalMin = Math.round(travelMin + (stopsBefore * STOP_BUFFER_MINUTES));
@@ -51,7 +51,7 @@ exports.updateLocation = async (req, res) => {
       if (pendingStudents.length > 0) {
         const nearest = pendingStudents.map(s => ({
           student: s,
-          distance: distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(s.pickupLat), parseFloat(s.pickupLng)),
+          distance: distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(s.parent.pickupLat), parseFloat(s.parent.pickupLng)),
         })).sort((a, b) => a.distance - b.distance)[0];
         if (nearest && nearest.distance <= 200) {
           const parent = nearest.student.parent;
@@ -86,13 +86,14 @@ exports.getLocationHistory = async (req, res) => {
 };
 exports.getMyChildBus = async (req, res) => {
   try {
+    const parentUser = await User.findByPk(req.user.id, { attributes: ['id','pickupLat','pickupLng','dropoffLat','dropoffLng'] });
     const children = await Student.findAll({ where: { parentId: req.user.id }, include: [{ model: Route, as: 'routes', through: { attributes: ['stopOrder'] }, include: [
       { model: Trip, as: 'trips', where: { status: 'in_progress' }, required: false, include: [
         { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','color'] },
         { model: User, as: 'driver', attributes: ['id','firstName','lastName','phone'] },
       ] },
       { model: School, as: 'school', attributes: ['id','name'] },
-      { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
+      { model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','pickupLat','pickupLng','dropoffLat','dropoffLng'] }] },
     ] }] });
     const activeBuses = []; const seen = new Set();
     const STOP_BUFFER_MINUTES = 3; // extra minutes per stop before the child's pickup
@@ -113,11 +114,11 @@ exports.getMyChildBus = async (req, res) => {
               const childStopOrder = c.routes.find(r => r.id === route.id)?.RouteStudent?.stopOrder || 0;
               let eta = null;
 
-              if (latest && c.pickupLat && c.pickupLng) {
+              if (latest && parentUser.pickupLat && parentUser.pickupLng) {
                 const busLat = parseFloat(latest.lat);
                 const busLng = parseFloat(latest.lng);
-                const childLat = parseFloat(c.pickupLat);
-                const childLng = parseFloat(c.pickupLng);
+                const childLat = parseFloat(parentUser.pickupLat);
+                const childLng = parseFloat(parentUser.pickupLng);
                 const distance = distanceInMeters(busLat, busLng, childLat, childLng);
                 const distanceKm = distance / 1000;
 
@@ -145,7 +146,28 @@ exports.getMyChildBus = async (req, res) => {
               return { id: c.id, firstName: c.firstName, lastName: c.lastName, grade: c.grade, eta };
             });
 
-            activeBuses.push({ tripId: trip.id, tripType: trip.type, routeName: route.name, routeSchool: route.school ? route.school.name : null, vehicle: trip.vehicle, driver: trip.driver, location: latest ? { lat: parseFloat(latest.lat), lng: parseFloat(latest.lng), speed: latest.speed ? parseFloat(latest.speed) : null, recordedAt: latest.recordedAt } : null, children: childrenEta });
+            // Build pending stops list for map display (privacy-aware)
+            const isMorning = trip.type === 'morning_pickup';
+            const myChildIds = new Set(children.map(c => c.id));
+            const pendingStops = (route.students || [])
+              .filter(s => !pickedUp.has(s.id))
+              .filter(s => {
+                if (!s.parent) return false;
+                const lat = isMorning ? s.parent.pickupLat : s.parent.dropoffLat;
+                const lng = isMorning ? s.parent.pickupLng : s.parent.dropoffLng;
+                return lat && lng;
+              })
+              .sort((a, b) => (a.RouteStudent.stopOrder || 0) - (b.RouteStudent.stopOrder || 0))
+              .map(s => {
+                const lat = parseFloat(isMorning ? s.parent.pickupLat : s.parent.dropoffLat);
+                const lng = parseFloat(isMorning ? s.parent.pickupLng : s.parent.dropoffLng);
+                const isMyChild = myChildIds.has(s.id);
+                const stop = { stopOrder: s.RouteStudent.stopOrder, lat, lng, isMyChild };
+                if (isMyChild) { stop.studentId = s.id; stop.firstName = s.firstName; }
+                return stop;
+              });
+
+            activeBuses.push({ tripId: trip.id, tripType: trip.type, routeName: route.name, routeSchool: route.school ? route.school.name : null, vehicle: trip.vehicle, driver: trip.driver, location: latest ? { lat: parseFloat(latest.lat), lng: parseFloat(latest.lng), speed: latest.speed ? parseFloat(latest.speed) : null, recordedAt: latest.recordedAt } : null, children: childrenEta, pendingStops });
           }
         }
       }
