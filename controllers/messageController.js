@@ -1,4 +1,4 @@
-const { Message, User, Trip, Route, Student, School } = require('../models');
+const { Message, User, Trip, Route, Student, School, RouteStudent } = require('../models');
 const { Op } = require('sequelize');
 exports.getConversations = async (req, res) => {
   try {
@@ -74,5 +74,38 @@ exports.getRouteParents = async (req, res) => {
     const parents = []; const seen = new Set();
     (route.students || []).forEach(s => { if (s.parent && !seen.has(s.parent.id)) { seen.add(s.parent.id); parents.push({ ...s.parent.toJSON(), children: route.students.filter(st => st.parentId === s.parent.id).map(st => ({ id: st.id, firstName: st.firstName, lastName: st.lastName, grade: st.grade })) }); } });
     res.json({ parents, total: parents.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+// Get drivers assigned to routes that have this parent's children
+exports.getMyDrivers = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const children = await Student.findAll({ where: { parentId: userId, isActive: true } });
+    if (children.length === 0) return res.json({ drivers: [] });
+    const childIds = children.map(c => c.id);
+    const routeStudents = await RouteStudent.findAll({ where: { studentId: childIds } });
+    const routeIds = [...new Set(routeStudents.map(rs => rs.routeId))];
+    if (routeIds.length === 0) return res.json({ drivers: [] });
+    const routes = await Route.findAll({ where: { id: routeIds, isActive: true }, include: [{ model: User, as: 'driver', attributes: ['id','firstName','lastName','phone','email'] }] });
+    const drivers = []; const seen = new Set();
+    routes.forEach(r => {
+      if (r.driver && !seen.has(r.driver.id)) {
+        seen.add(r.driver.id);
+        drivers.push({ id: r.driver.id, firstName: r.driver.firstName, lastName: r.driver.lastName, phone: r.driver.phone, email: r.driver.email, routeName: r.name });
+      }
+    });
+    res.json({ drivers });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+// Get system/alert notifications for a user
+exports.getNotifications = async (req, res) => {
+  try {
+    const msgs = await Message.findAll({
+      where: { receiverId: req.user.id, messageType: { [Op.in]: ['alert', 'arrival', 'system'] } },
+      include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }],
+      order: [['created_at', 'DESC']],
+      limit: 50,
+    });
+    res.json({ notifications: msgs });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

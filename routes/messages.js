@@ -4,6 +4,8 @@ const { authenticate, schoolTenancy } = require('../middleware/auth');
 router.use(authenticate); router.use(schoolTenancy);
 router.get('/conversations', c.getConversations);
 router.get('/unread-count', c.getUnreadCount);
+router.get('/notifications', c.getNotifications);
+router.get('/my-drivers', c.getMyDrivers);
 router.get('/thread/:partnerId', c.getThread);
 router.get('/route-parents/:routeId', c.getRouteParents);
 router.post('/', c.send);

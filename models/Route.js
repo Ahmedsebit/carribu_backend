@@ -8,6 +8,9 @@ const Route = sequelize.define('Route', {
   vehicleId: { type: DataTypes.INTEGER, field: 'vehicle_id' },
   driverId: { type: DataTypes.INTEGER, field: 'driver_id' },
   type: { type: DataTypes.ENUM('morning','afternoon','both'), defaultValue: 'both' },
+  grades: { type: DataTypes.JSON, defaultValue: [] },
+  departureTime: { type: DataTypes.STRING(10), field: 'departure_time' },
+  waypoints: { type: DataTypes.JSON, defaultValue: [] },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
 }, { tableName: 'routes' });
 module.exports = Route;

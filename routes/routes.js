@@ -5,6 +5,7 @@ router.use(authenticate); router.use(schoolTenancy);
 router.get('/', c.getAll);
 router.get('/:id', c.getById);
 router.post('/', authorize('super_admin','admin','coordinator'), c.create);
+router.post('/suggest-students', authorize('super_admin','admin','coordinator'), c.suggestStudents);
 router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
 router.delete('/:id', authorize('super_admin','admin'), c.delete);
 module.exports = router;

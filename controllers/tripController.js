@@ -1,4 +1,12 @@
 const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
+const { notifyUser, notifyTrip } = require('../socket');
+
+// Helper: calculate ETA based on stops away (avg 3 min per stop)
+function estimateETA(stopsAway) {
+  const minutes = stopsAway * 3;
+  return { minutes, text: minutes <= 1 ? '~1 minute' : `~${minutes} minutes` };
+}
+
 exports.getAll = async (req, res) => {
   try {
     const where = {};
@@ -23,11 +31,40 @@ exports.create = async (req, res) => {
 };
 exports.startTrip = async (req, res) => {
   try {
-    const trip = await Trip.findByPk(req.params.id, { include: [{ model: Route, as: 'route', where: { schoolId: req.user.schoolId } }] });
+    const trip = await Trip.findByPk(req.params.id, {
+      include: [{
+        model: Route, as: 'route', where: { schoolId: req.user.schoolId },
+        include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email'] }] }]
+      }, { model: User, as: 'driver', attributes: ['id','firstName','lastName'] }]
+    });
     if (!trip) return res.status(404).json({ error: 'Trip not found.' });
     if (trip.status !== 'scheduled') return res.status(400).json({ error: 'Trip already started or completed.' });
     await trip.update({ status: 'in_progress', startedAt: new Date() });
-    res.json({ message: 'Trip started.', trip });
+
+    // Notify all parents on this route that the trip has started
+    if (trip.route && trip.route.students) {
+      const driverName = trip.driver ? `${trip.driver.firstName} ${trip.driver.lastName}` : 'Your driver';
+      for (const student of trip.route.students) {
+        if (student.parent) {
+          const content = `🚌 Trip started! ${driverName} is now on the way to pick up ${student.firstName}. Track live in the app.`;
+          await Message.create({
+            schoolId: req.user.schoolId, senderId: req.user.id,
+            receiverId: student.parent.id, tripId: trip.id,
+            content, messageType: 'alert',
+          });
+          notifyUser(student.parent.id, 'trip-started', {
+            tripId: trip.id, routeName: trip.route.name,
+            driverName, studentName: student.firstName,
+            message: content,
+          });
+        }
+      }
+    }
+
+    // Broadcast trip-started to trip room
+    notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'in_progress' });
+
+    res.json({ message: 'Trip started. All parents notified.', trip });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.endTrip = async (req, res) => {
@@ -36,6 +73,7 @@ exports.endTrip = async (req, res) => {
     if (!trip) return res.status(404).json({ error: 'Trip not found.' });
     if (trip.status !== 'in_progress') return res.status(400).json({ error: 'Trip not in progress.' });
     await trip.update({ status: 'completed', endedAt: new Date() });
+    notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'completed' });
     res.json({ message: 'Trip completed.', trip });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
@@ -46,30 +84,62 @@ exports.logAction = async (req, res) => {
     if (!trip) return res.status(404).json({ error: 'Trip not found.' });
     const log = await TripLog.create({ tripId: trip.id, studentId, action, lat, lng, notes, timestamp: new Date() });
 
-    // Notify parents of students coming AFTER this stop when a child is picked up
-    if (action === 'check_in' && trip.route && trip.route.students) {
+    if (trip.route && trip.route.students) {
       const pickedStudent = trip.route.students.find(s => s.id === studentId);
-      if (pickedStudent) {
+
+      if (action === 'arrived' && pickedStudent && pickedStudent.parent) {
+        // Notify the parent that driver has arrived at their location
+        const content = `🚌 The bus has arrived at your pickup location for ${pickedStudent.firstName}!`;
+        await Message.create({
+          schoolId: req.user.schoolId, senderId: req.user.id,
+          receiverId: pickedStudent.parent.id, tripId: trip.id,
+          content, messageType: 'arrival',
+        });
+        notifyUser(pickedStudent.parent.id, 'driver-arrived', {
+          tripId: trip.id, studentName: pickedStudent.firstName, message: content,
+        });
+      }
+
+      if (action === 'check_in' && pickedStudent) {
+        // Notify this parent that their child was picked up
+        if (pickedStudent.parent) {
+          const pickupMsg = `✅ ${pickedStudent.firstName} has been picked up and is on the bus!`;
+          await Message.create({
+            schoolId: req.user.schoolId, senderId: req.user.id,
+            receiverId: pickedStudent.parent.id, tripId: trip.id,
+            content: pickupMsg, messageType: 'system',
+          });
+          notifyUser(pickedStudent.parent.id, 'student-picked-up', {
+            tripId: trip.id, studentName: pickedStudent.firstName, message: pickupMsg,
+          });
+        }
+
+        // Notify next 3 parents that the driver is approaching
         const pickedOrder = pickedStudent.RouteStudent.stopOrder;
-        // Find students with higher stop order (coming after this pickup)
-        const upcomingStudents = trip.route.students.filter(s =>
-          s.RouteStudent.stopOrder > pickedOrder && s.parent && s.parent.id !== req.user.id
-        );
-        // Notify each parent that the bus picked up a student before theirs
+        const upcomingStudents = trip.route.students
+          .filter(s => s.RouteStudent.stopOrder > pickedOrder && s.parent)
+          .sort((a, b) => a.RouteStudent.stopOrder - b.RouteStudent.stopOrder)
+          .slice(0, 3);
+
         for (const upcoming of upcomingStudents) {
           const stopsAway = upcoming.RouteStudent.stopOrder - pickedOrder;
-          const content = `🚌 Bus update: ${pickedStudent.firstName} was just picked up. Your child ${upcoming.firstName} is ${stopsAway} stop${stopsAway > 1 ? 's' : ''} away (~${stopsAway * 3} min).`;
+          const eta = estimateETA(stopsAway);
+          const content = `🚌 Driver is approaching! ${stopsAway} stop${stopsAway > 1 ? 's' : ''} away from ${upcoming.firstName}'s pickup. ETA: ${eta.text}`;
           await Message.create({
-            schoolId: req.user.schoolId,
-            senderId: req.user.id,
-            receiverId: upcoming.parent.id,
-            tripId: trip.id,
-            content,
-            messageType: 'system',
+            schoolId: req.user.schoolId, senderId: req.user.id,
+            receiverId: upcoming.parent.id, tripId: trip.id,
+            content, messageType: 'alert',
+          });
+          notifyUser(upcoming.parent.id, 'driver-approaching', {
+            tripId: trip.id, studentName: upcoming.firstName,
+            stopsAway, etaMinutes: eta.minutes, message: content,
           });
         }
       }
     }
+
+    // Broadcast pickup event to trip room
+    notifyTrip(trip.id, 'trip-log', { tripId: trip.id, studentId, action, lat, lng, timestamp: Date.now() });
 
     res.status(201).json({ message: `Student ${action} logged.`, log });
   } catch (err) { res.status(500).json({ error: err.message }); }

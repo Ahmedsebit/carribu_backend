@@ -1,0 +1,12 @@
+const router = require('express').Router();
+const c = require('../controllers/driverMgmtController');
+const { authenticate, authorize, schoolTenancy } = require('../middleware/auth');
+router.use(authenticate);
+router.use(authorize('super_admin', 'admin', 'coordinator'));
+router.use(schoolTenancy);
+router.get('/', c.listDrivers);
+router.get('/:id', c.getDriver);
+router.post('/', c.createDriver);
+router.put('/:id', c.updateDriver);
+router.delete('/:id', c.deleteDriver);
+module.exports = router;
