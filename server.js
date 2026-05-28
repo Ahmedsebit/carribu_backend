@@ -3,6 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const http = require('http');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
 require('dotenv').config();
 const { sequelize } = require('./models');
 const { initSocket } = require('./socket');
@@ -16,6 +18,13 @@ app.use(cors({ origin: '*', credentials: true }));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Swagger API docs
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Carribu API Documentation',
+}));
+app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/schools', require('./routes/schools'));
 app.use('/api/vehicles', require('./routes/vehicles'));
