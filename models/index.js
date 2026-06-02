@@ -10,6 +10,8 @@ const TripLog = require('./TripLog');
 const Message = require('./Message');
 const BusLocation = require('./BusLocation');
 const AppVersion = require('./AppVersion');
+const AuditLog = require('./AuditLog');
+const Subscription = require('./Subscription');
 
 School.hasMany(User, { foreignKey: 'school_id', as: 'users' });
 School.hasMany(Vehicle, { foreignKey: 'school_id', as: 'vehicles' });
@@ -62,4 +64,10 @@ BusLocation.belongsTo(User, { foreignKey: 'driver_id', as: 'driver' });
 RouteStudent.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
 RouteStudent.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
 
-module.exports = { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, TripLog, Message, BusLocation, AppVersion };
+AuditLog.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
+
+Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
+School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
+
+module.exports = { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, TripLog, Message, BusLocation, AppVersion, AuditLog, Subscription };

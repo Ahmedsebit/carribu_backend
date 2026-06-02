@@ -303,4 +303,257 @@ router.post('/admins', c.createSchoolAdmin);
  */
 router.delete('/admins/:id', c.removeSchoolAdmin);
 
+// --- Monitoring Routes ---
+const m = require('../controllers/monitoringController');
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/active-trips:
+ *   get:
+ *     summary: Get all currently active (in-progress) trips
+ *     tags: [Super Admin - Monitoring]
+ *     responses:
+ *       200:
+ *         description: List of active trips with driver and vehicle info
+ */
+router.get('/monitoring/active-trips', m.activeTrips);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/recent-trips:
+ *   get:
+ *     summary: Get recent trips across all schools
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [scheduled, in_progress, completed, cancelled]
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *     responses:
+ *       200:
+ *         description: Paginated list of recent trips
+ */
+router.get('/monitoring/recent-trips', m.recentTrips);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/trip-history:
+ *   get:
+ *     summary: Get trip history with date range filtering
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *     responses:
+ *       200:
+ *         description: Trip history with status breakdown
+ */
+router.get('/monitoring/trip-history', m.tripHistory);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/growth:
+ *   get:
+ *     summary: Get platform growth metrics with period comparison
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *         description: Number of days to measure growth
+ *     responses:
+ *       200:
+ *         description: Growth metrics with percentage changes
+ */
+router.get('/monitoring/growth', m.growthMetrics);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/school-growth:
+ *   get:
+ *     summary: Get per-school growth breakdown
+ *     tags: [Super Admin - Monitoring]
+ *     responses:
+ *       200:
+ *         description: Growth data per school
+ */
+router.get('/monitoring/school-growth', m.schoolGrowth);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/alerts:
+ *   get:
+ *     summary: Get platform health alerts
+ *     tags: [Super Admin - Monitoring]
+ *     responses:
+ *       200:
+ *         description: Alerts including idle schools, expired insurance, missing admins
+ */
+router.get('/monitoring/alerts', m.alerts);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/audit-logs:
+ *   get:
+ *     summary: Get audit logs (filterable)
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: userId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: action
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *     responses:
+ *       200:
+ *         description: Paginated audit logs
+ */
+router.get('/monitoring/audit-logs', m.auditLogs);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/recent-logins:
+ *   get:
+ *     summary: Get recent login activity
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *     responses:
+ *       200:
+ *         description: Recent login attempts (success and failed)
+ */
+router.get('/monitoring/recent-logins', m.recentLogins);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/subscriptions:
+ *   get:
+ *     summary: List all school subscriptions
+ *     tags: [Super Admin - Monitoring]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, expired, cancelled, trial]
+ *     responses:
+ *       200:
+ *         description: List of subscriptions
+ */
+router.get('/monitoring/subscriptions', m.subscriptions);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/subscriptions:
+ *   post:
+ *     summary: Create or update a school subscription
+ *     tags: [Super Admin - Monitoring]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [schoolId, plan]
+ *             properties:
+ *               schoolId:
+ *                 type: integer
+ *               plan:
+ *                 type: string
+ *                 enum: [free, basic, premium, enterprise]
+ *               maxStudents:
+ *                 type: integer
+ *               maxVehicles:
+ *                 type: integer
+ *               startDate:
+ *                 type: string
+ *                 format: date
+ *               endDate:
+ *                 type: string
+ *                 format: date
+ *               amount:
+ *                 type: number
+ *               currency:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Subscription created/updated
+ */
+router.post('/monitoring/subscriptions', m.createSubscription);
+
+/**
+ * @swagger
+ * /api/super-admin/monitoring/usage:
+ *   get:
+ *     summary: Get usage metrics per school (students/vehicles vs limits)
+ *     tags: [Super Admin - Monitoring]
+ *     responses:
+ *       200:
+ *         description: Usage data with utilization percentages
+ */
+router.get('/monitoring/usage', m.schoolUsage);
+
 module.exports = router;

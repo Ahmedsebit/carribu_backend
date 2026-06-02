@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { User, School } = require('../models');
+const { logLogin } = require('../middleware/auditLog');
 const generateToken = (user) => jwt.sign(
   { id: user.id, email: user.email, role: user.role, schoolId: user.schoolId },
   process.env.JWT_SECRET || 'default-secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
@@ -20,8 +21,12 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ where: { email }, include: [{ model: School, as: 'school', attributes: ['id','name'] }] });
-    if (!user || !(await user.validPassword(password))) return res.status(401).json({ error: 'Invalid email or password.' });
+    if (!user || !(await user.validPassword(password))) {
+      await logLogin(null, email, req.ip, false);
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
     if (!user.isActive) return res.status(403).json({ error: 'Account deactivated.' });
+    await logLogin(user.id, email, req.ip, true);
     res.json({ message: 'Login successful.', token: generateToken(user), user });
   } catch (err) { res.status(500).json({ error: 'Login failed.', details: err.message }); }
 };
