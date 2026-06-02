@@ -93,7 +93,7 @@ router.get('/:id', c.getById);
  *       201:
  *         description: Route created
  */
-router.post('/', authorize('super_admin','admin','coordinator'), c.create);
+router.post('/', authorize('school_admin','coordinator'), c.create);
 
 /**
  * @swagger
@@ -118,7 +118,7 @@ router.post('/', authorize('super_admin','admin','coordinator'), c.create);
  *       200:
  *         description: Suggested students
  */
-router.post('/suggest-students', authorize('super_admin','admin','coordinator'), c.suggestStudents);
+router.post('/suggest-students', authorize('school_admin','coordinator'), c.suggestStudents);
 
 /**
  * @swagger
@@ -160,7 +160,7 @@ router.post('/suggest-students', authorize('super_admin','admin','coordinator'),
  *       404:
  *         description: Route not found
  */
-router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
+router.put('/:id', authorize('school_admin','coordinator'), c.update);
 
 /**
  * @swagger
@@ -180,6 +180,6 @@ router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
  *       404:
  *         description: Route not found
  */
-router.delete('/:id', authorize('super_admin','admin'), c.delete);
+router.delete('/:id', authorize('school_admin'), c.delete);
 
 module.exports = router;

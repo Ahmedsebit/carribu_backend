@@ -25,7 +25,7 @@ async function setupTestDB() {
     passwordHash: 'admin123',
     firstName: 'Admin',
     lastName: 'User',
-    role: 'admin',
+    role: 'school_admin',
     phone: '+254700000001',
   });
 

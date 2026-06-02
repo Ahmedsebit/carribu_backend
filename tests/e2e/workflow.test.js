@@ -32,7 +32,7 @@ beforeAll(async () => {
   // Step 2: Create users
   const admin = await User.create({
     schoolId: school.id, email: 'e2e-admin@test.com', passwordHash: 'admin123',
-    firstName: 'E2E', lastName: 'Admin', role: 'admin', phone: '+254700200001',
+    firstName: 'E2E', lastName: 'Admin', role: 'school_admin', phone: '+254700200001',
   });
 
   const driver = await User.create({

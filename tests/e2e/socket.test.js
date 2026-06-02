@@ -80,7 +80,7 @@ beforeAll(async () => {
   if (tripRes.status === 403) {
     const adminUser = await User.create({
       schoolId: school.id, email: 'sock-admin@test.com', passwordHash: 'admin123',
-      firstName: 'Socket', lastName: 'Admin', role: 'admin', phone: '+254700300001',
+      firstName: 'Socket', lastName: 'Admin', role: 'school_admin', phone: '+254700300001',
     });
     const aRes = await request(app).post('/api/auth/login').send({ email: 'sock-admin@test.com', password: 'admin123' });
     const adminToken = aRes.body.token;

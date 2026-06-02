@@ -43,7 +43,7 @@ router.use(authenticate); router.use(schoolTenancy);
  *       200:
  *         description: Location updated
  */
-router.post('/update', authorize('super_admin','admin','coordinator','driver'), c.updateLocation);
+router.post('/update', authorize('school_admin','coordinator','driver'), c.updateLocation);
 
 /**
  * @swagger

@@ -8,9 +8,11 @@ exports.register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, role, phone, schoolId } = req.body;
     if (await User.findOne({ where: { email } })) return res.status(400).json({ error: 'Email already registered.' });
-    const school = await School.findByPk(schoolId);
-    if (!school) return res.status(400).json({ error: 'Invalid school ID.' });
-    const user = await User.create({ email, passwordHash: password, firstName, lastName, role: role || 'parent', phone, schoolId });
+    if (schoolId) {
+      const school = await School.findByPk(schoolId);
+      if (!school) return res.status(400).json({ error: 'Invalid school ID.' });
+    }
+    const user = await User.create({ email, passwordHash: password, firstName, lastName, role: role || 'parent', phone, schoolId: schoolId || null });
     res.status(201).json({ message: 'User registered.', token: generateToken(user), user });
   } catch (err) { res.status(500).json({ error: 'Registration failed.', details: err.message }); }
 };

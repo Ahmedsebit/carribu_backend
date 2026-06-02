@@ -53,7 +53,7 @@ const options = {
             email: { type: 'string', format: 'email' },
             firstName: { type: 'string', example: 'Alice' },
             lastName: { type: 'string', example: 'Mwangi' },
-            role: { type: 'string', enum: ['super_admin', 'admin', 'coordinator', 'driver', 'parent'] },
+            role: { type: 'string', enum: ['super_admin', 'school_admin', 'coordinator', 'driver', 'parent'] },
             phone: { type: 'string', example: '+254711000001' },
             pickupAddress: { type: 'string', nullable: true },
             pickupLat: { type: 'number', format: 'double', nullable: true },

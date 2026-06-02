@@ -10,7 +10,7 @@ const { authenticate, authorize, schoolTenancy } = require('../middleware/auth')
  */
 
 router.use(authenticate);
-router.use(authorize('super_admin','admin','coordinator','driver'));
+router.use(authorize('school_admin','coordinator','driver'));
 router.use(schoolTenancy);
 
 /**

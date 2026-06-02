@@ -1,7 +1,7 @@
 const { School, User, Vehicle, Student, Route } = require('../models');
 exports.getAll = async (req, res) => {
   try {
-    const where = req.user.role !== 'super_admin' ? { id: req.user.schoolId } : {};
+    const where = { id: req.user.schoolId };
     const schools = await School.findAll({ where, include: [
       { model: Vehicle, as: 'vehicles', attributes: ['id'] },
       { model: Student, as: 'students', attributes: ['id'] },

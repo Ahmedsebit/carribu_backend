@@ -61,7 +61,7 @@ router.get('/', c.getAll);
  *       201:
  *         description: Trip created
  */
-router.post('/', authorize('super_admin','admin','coordinator','driver'), c.create);
+router.post('/', authorize('school_admin','coordinator','driver'), c.create);
 
 /**
  * @swagger
@@ -81,7 +81,7 @@ router.post('/', authorize('super_admin','admin','coordinator','driver'), c.crea
  *       404:
  *         description: Trip not found
  */
-router.put('/:id/start', authorize('super_admin','admin','coordinator','driver'), c.startTrip);
+router.put('/:id/start', authorize('school_admin','coordinator','driver'), c.startTrip);
 
 /**
  * @swagger
@@ -101,7 +101,7 @@ router.put('/:id/start', authorize('super_admin','admin','coordinator','driver')
  *       404:
  *         description: Trip not found
  */
-router.put('/:id/end', authorize('super_admin','admin','coordinator','driver'), c.endTrip);
+router.put('/:id/end', authorize('school_admin','coordinator','driver'), c.endTrip);
 
 /**
  * @swagger
@@ -140,7 +140,7 @@ router.put('/:id/end', authorize('super_admin','admin','coordinator','driver'), 
  *       201:
  *         description: Action logged
  */
-router.post('/:id/log', authorize('super_admin','admin','coordinator','driver'), c.logAction);
+router.post('/:id/log', authorize('school_admin','coordinator','driver'), c.logAction);
 
 /**
  * @swagger

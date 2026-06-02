@@ -51,7 +51,7 @@ router.get('/latest/:appName', async (req, res) => {
  *       200:
  *         description: List of all app versions
  */
-router.get('/', authenticate, authorize('admin', 'super_admin'), async (req, res) => {
+router.get('/', authenticate, authorize('school_admin', 'super_admin'), async (req, res) => {
   try {
     const versions = await AppVersion.findAll({ order: [['createdAt', 'DESC']] });
     res.json({ versions });
@@ -87,7 +87,7 @@ router.get('/', authenticate, authorize('admin', 'super_admin'), async (req, res
  *       201:
  *         description: Version created
  */
-router.post('/', authenticate, authorize('admin', 'super_admin'), async (req, res) => {
+router.post('/', authenticate, authorize('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { appName, version, downloadUrl, releaseNotes } = req.body;
     if (!appName || !version || !downloadUrl) {
@@ -116,7 +116,7 @@ router.post('/', authenticate, authorize('admin', 'super_admin'), async (req, re
  *       200:
  *         description: Version updated
  */
-router.put('/:id', authenticate, authorize('admin', 'super_admin'), async (req, res) => {
+router.put('/:id', authenticate, authorize('school_admin', 'super_admin'), async (req, res) => {
   try {
     const appVersion = await AppVersion.findByPk(req.params.id);
     if (!appVersion) return res.status(404).json({ error: 'Version not found.' });
@@ -144,7 +144,7 @@ router.put('/:id', authenticate, authorize('admin', 'super_admin'), async (req, 
  *       200:
  *         description: Version deleted
  */
-router.delete('/:id', authenticate, authorize('admin', 'super_admin'), async (req, res) => {
+router.delete('/:id', authenticate, authorize('school_admin', 'super_admin'), async (req, res) => {
   try {
     const appVersion = await AppVersion.findByPk(req.params.id);
     if (!appVersion) return res.status(404).json({ error: 'Version not found.' });

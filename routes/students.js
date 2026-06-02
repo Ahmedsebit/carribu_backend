@@ -81,7 +81,7 @@ router.get('/:id', c.getById);
  *       201:
  *         description: Student created
  */
-router.post('/', authorize('super_admin','admin','coordinator'), c.create);
+router.post('/', authorize('school_admin','coordinator'), c.create);
 
 /**
  * @swagger
@@ -116,7 +116,7 @@ router.post('/', authorize('super_admin','admin','coordinator'), c.create);
  *       404:
  *         description: Student not found
  */
-router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
+router.put('/:id', authorize('school_admin','coordinator'), c.update);
 
 /**
  * @swagger
@@ -136,7 +136,7 @@ router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
  *       404:
  *         description: Student not found
  */
-router.delete('/:id', authorize('super_admin','admin'), c.delete);
+router.delete('/:id', authorize('school_admin'), c.delete);
 
 /**
  * @swagger
@@ -166,6 +166,6 @@ router.delete('/:id', authorize('super_admin','admin'), c.delete);
  *       200:
  *         description: Student assigned to route
  */
-router.post('/:id/assign-route', authorize('super_admin','admin','coordinator'), c.assignRoute);
+router.post('/:id/assign-route', authorize('school_admin','coordinator'), c.assignRoute);
 
 module.exports = router;

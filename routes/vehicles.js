@@ -106,7 +106,7 @@ router.get('/:id', c.getById);
  *       201:
  *         description: Vehicle created
  */
-router.post('/', authorize('super_admin','admin','coordinator'), c.create);
+router.post('/', authorize('school_admin','coordinator'), c.create);
 
 /**
  * @swagger
@@ -151,7 +151,7 @@ router.post('/', authorize('super_admin','admin','coordinator'), c.create);
  *       404:
  *         description: Vehicle not found
  */
-router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
+router.put('/:id', authorize('school_admin','coordinator'), c.update);
 
 /**
  * @swagger
@@ -171,6 +171,6 @@ router.put('/:id', authorize('super_admin','admin','coordinator'), c.update);
  *       404:
  *         description: Vehicle not found
  */
-router.delete('/:id', authorize('super_admin','admin'), c.delete);
+router.delete('/:id', authorize('school_admin'), c.delete);
 
 module.exports = router;

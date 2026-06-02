@@ -12,17 +12,18 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
     ]);
     console.log(`✅ ${schools.length} schools`);
     const users = await User.bulkCreate([
-      { schoolId:1, email:'admin@nairobiacademy.co.ke', passwordHash:'admin123', firstName:'Alice', lastName:'Mwangi', role:'admin', phone:'+254711000001' },
+      { email:'superadmin@carribu.io', passwordHash:'super123', firstName:'Super', lastName:'Admin', role:'super_admin', phone:'+254700000000' },
+      { schoolId:1, email:'admin@nairobiacademy.co.ke', passwordHash:'admin123', firstName:'Alice', lastName:'Mwangi', role:'school_admin', phone:'+254711000001' },
       { schoolId:1, email:'coordinator@nairobiacademy.co.ke', passwordHash:'coord123', firstName:'Brian', lastName:'Ochieng', role:'coordinator', phone:'+254711000002' },
       { schoolId:1, email:'driver1@nairobiacademy.co.ke', passwordHash:'driver123', firstName:'Charles', lastName:'Mutua', role:'driver', phone:'+254711000003' },
       { schoolId:1, email:'driver2@nairobiacademy.co.ke', passwordHash:'driver123', firstName:'David', lastName:'Wanjiru', role:'driver', phone:'+254711000004' },
       { schoolId:1, email:'parent1@gmail.com', passwordHash:'parent123', firstName:'Esther', lastName:'Kamau', role:'parent', phone:'+254711000005', pickupAddress:'Westlands, Nairobi', pickupLat:-1.2641, pickupLng:36.8053 },
       { schoolId:1, email:'parent2@gmail.com', passwordHash:'parent123', firstName:'Francis', lastName:'Njoroge', role:'parent', phone:'+254711000006', pickupAddress:'Kilimani, Nairobi', pickupLat:-1.2888, pickupLng:36.7845 },
       { schoolId:1, email:'parent3@gmail.com', passwordHash:'parent123', firstName:'Grace', lastName:'Otieno', role:'parent', phone:'+254711000007', pickupAddress:'South B, Nairobi', pickupLat:-1.3092, pickupLng:36.8345 },
-      { schoolId:2, email:'admin@mombasainternational.co.ke', passwordHash:'admin123', firstName:'Hassan', lastName:'Ahmed', role:'admin', phone:'+254711000008' },
+      { schoolId:2, email:'admin@mombasainternational.co.ke', passwordHash:'admin123', firstName:'Hassan', lastName:'Ahmed', role:'school_admin', phone:'+254711000008' },
       { schoolId:2, email:'driver1@mombasainternational.co.ke', passwordHash:'driver123', firstName:'Ibrahim', lastName:'Said', role:'driver', phone:'+254711000009' },
       { schoolId:2, email:'parent4@gmail.com', passwordHash:'parent123', firstName:'Jamila', lastName:'Omar', role:'parent', phone:'+254711000010', pickupAddress:'Nyali, Mombasa', pickupLat:-4.0225, pickupLng:39.7103 },
-      { schoolId:3, email:'admin@kisumulakeside.co.ke', passwordHash:'admin123', firstName:'Kevin', lastName:'Onyango', role:'admin', phone:'+254711000011' },
+      { schoolId:3, email:'admin@kisumulakeside.co.ke', passwordHash:'admin123', firstName:'Kevin', lastName:'Onyango', role:'school_admin', phone:'+254711000011' },
       { schoolId:3, email:'driver1@kisumulakeside.co.ke', passwordHash:'driver123', firstName:'Lilian', lastName:'Auma', role:'driver', phone:'+254711000012' },
     ], { individualHooks: true });
     console.log(`✅ ${users.length} users (passwords hashed)`);
@@ -38,24 +39,24 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
     ]);
     console.log(`✅ ${vehicles.length} vehicles`);
     const students = await Student.bulkCreate([
-      { schoolId:1, parentId:5, firstName:'Amani', lastName:'Kamau', grade:'Grade 3' },
-      { schoolId:1, parentId:5, firstName:'Baraka', lastName:'Kamau', grade:'Grade 5' },
-      { schoolId:1, parentId:6, firstName:'Ciku', lastName:'Njoroge', grade:'Grade 2' },
-      { schoolId:1, parentId:6, firstName:'Diani', lastName:'Njoroge', grade:'Grade 4' },
-      { schoolId:1, parentId:7, firstName:'Erick', lastName:'Otieno', grade:'Grade 1' },
-      { schoolId:1, parentId:7, firstName:'Faith', lastName:'Otieno', grade:'Grade 6' },
-      { schoolId:2, parentId:10, firstName:'Ghali', lastName:'Omar', grade:'Grade 3' },
-      { schoolId:2, parentId:10, firstName:'Halima', lastName:'Omar', grade:'Grade 5' },
+      { schoolId:1, parentId:6, firstName:'Amani', lastName:'Kamau', grade:'Grade 3' },
+      { schoolId:1, parentId:6, firstName:'Baraka', lastName:'Kamau', grade:'Grade 5' },
+      { schoolId:1, parentId:7, firstName:'Ciku', lastName:'Njoroge', grade:'Grade 2' },
+      { schoolId:1, parentId:7, firstName:'Diani', lastName:'Njoroge', grade:'Grade 4' },
+      { schoolId:1, parentId:8, firstName:'Erick', lastName:'Otieno', grade:'Grade 1' },
+      { schoolId:1, parentId:8, firstName:'Faith', lastName:'Otieno', grade:'Grade 6' },
+      { schoolId:2, parentId:11, firstName:'Ghali', lastName:'Omar', grade:'Grade 3' },
+      { schoolId:2, parentId:11, firstName:'Halima', lastName:'Omar', grade:'Grade 5' },
       { schoolId:3, firstName:'Ian', lastName:'Odhiambo', grade:'Grade 2' },
       { schoolId:3, firstName:'Joyce', lastName:'Adhiambo', grade:'Grade 4' },
     ]);
     console.log(`✅ ${students.length} students`);
     await Route.bulkCreate([
-      { schoolId:1, name:'Westlands–Kilimani Route', description:'Covers Westlands and Kilimani', vehicleId:1, driverId:3, type:'both' },
-      { schoolId:1, name:'South B–South C Route', description:'Covers South B and South C', vehicleId:2, driverId:4, type:'both' },
-      { schoolId:1, name:'Karen–Langata Route', description:'Covers Karen and Langata', vehicleId:3, driverId:3, type:'morning' },
-      { schoolId:2, name:'Nyali–Bamburi Route', description:'Covers Nyali and Bamburi', vehicleId:5, driverId:9, type:'both' },
-      { schoolId:3, name:'Milimani–CBD Route', description:'Covers Milimani and Kisumu CBD', vehicleId:7, driverId:12, type:'both' },
+      { schoolId:1, name:'Westlands–Kilimani Route', description:'Covers Westlands and Kilimani', vehicleId:1, driverId:4, type:'both' },
+      { schoolId:1, name:'South B–South C Route', description:'Covers South B and South C', vehicleId:2, driverId:5, type:'both' },
+      { schoolId:1, name:'Karen–Langata Route', description:'Covers Karen and Langata', vehicleId:3, driverId:4, type:'morning' },
+      { schoolId:2, name:'Nyali–Bamburi Route', description:'Covers Nyali and Bamburi', vehicleId:5, driverId:10, type:'both' },
+      { schoolId:3, name:'Milimani–CBD Route', description:'Covers Milimani and Kisumu CBD', vehicleId:7, driverId:13, type:'both' },
     ]);
     console.log('✅ 5 routes');
     await RouteStudent.bulkCreate([
@@ -68,11 +69,11 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
     console.log('✅ 10 route-student assignments');
     const today = new Date().toISOString().split('T')[0];
     await Trip.bulkCreate([
-      { routeId:1, driverId:3, vehicleId:1, status:'completed', type:'morning_pickup', scheduledDate:today, startedAt:new Date(`${today}T06:30:00`), endedAt:new Date(`${today}T07:45:00`) },
-      { routeId:2, driverId:4, vehicleId:2, status:'in_progress', type:'morning_pickup', scheduledDate:today, startedAt:new Date(`${today}T06:45:00`) },
-      { routeId:1, driverId:3, vehicleId:1, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
-      { routeId:2, driverId:4, vehicleId:2, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
-      { routeId:4, driverId:9, vehicleId:5, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
+      { routeId:1, driverId:4, vehicleId:1, status:'completed', type:'morning_pickup', scheduledDate:today, startedAt:new Date(`${today}T06:30:00`), endedAt:new Date(`${today}T07:45:00`) },
+      { routeId:2, driverId:5, vehicleId:2, status:'in_progress', type:'morning_pickup', scheduledDate:today, startedAt:new Date(`${today}T06:45:00`) },
+      { routeId:1, driverId:4, vehicleId:1, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
+      { routeId:2, driverId:5, vehicleId:2, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
+      { routeId:4, driverId:10, vehicleId:5, status:'scheduled', type:'afternoon_dropoff', scheduledDate:today },
     ]);
     console.log('✅ 5 trips');
     await TripLog.bulkCreate([
@@ -83,7 +84,8 @@ const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip, Tr
       { tripId:2, studentId:5, action:'check_in', timestamp:new Date(`${today}T06:50:00`) },
     ]);
     console.log('✅ 5 trip logs');
-    console.log('\n🎉 Seed complete!\n📋 Login: admin@nairobiacademy.co.ke / admin123');
+    console.log('\n🎉 Seed complete!\n📋 Login: superadmin@carribu.io / super123 (super_admin)');
+    console.log('   School Admin: admin@nairobiacademy.co.ke / admin123');
     console.log('   Driver: driver1@nairobiacademy.co.ke / driver123');
     console.log('   Parent: parent1@gmail.com / parent123');
     process.exit(0);

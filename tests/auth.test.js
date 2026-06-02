@@ -22,7 +22,7 @@ describe('POST /api/auth/login', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
-    expect(res.body.user.role).toBe('admin');
+    expect(res.body.user.role).toBe('school_admin');
     expect(res.body.user.email).toBe('admin@test.com');
     expect(res.body.user.firstName).toBe('Admin');
   });
@@ -92,7 +92,7 @@ describe('GET /api/auth/me', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.user.email).toBe('admin@test.com');
-    expect(res.body.user.role).toBe('admin');
+    expect(res.body.user.role).toBe('school_admin');
   });
 
   test('should reject request without token', async () => {

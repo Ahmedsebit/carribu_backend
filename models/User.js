@@ -3,12 +3,12 @@ const bcrypt = require('bcryptjs');
 const sequelize = require('../config/database');
 const User = sequelize.define('User', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  schoolId: { type: DataTypes.INTEGER, allowNull: false, field: 'school_id', references: { model: 'schools', key: 'id' } },
+  schoolId: { type: DataTypes.INTEGER, allowNull: true, field: 'school_id', references: { model: 'schools', key: 'id' } },
   email: { type: DataTypes.STRING(150), allowNull: false, unique: true, validate: { isEmail: true } },
   passwordHash: { type: DataTypes.STRING(255), allowNull: false, field: 'password_hash' },
   firstName: { type: DataTypes.STRING(100), allowNull: false, field: 'first_name' },
   lastName: { type: DataTypes.STRING(100), allowNull: false, field: 'last_name' },
-  role: { type: DataTypes.ENUM('super_admin','admin','coordinator','driver','parent'), allowNull: false, defaultValue: 'parent' },
+  role: { type: DataTypes.ENUM('super_admin','school_admin','coordinator','driver','parent'), allowNull: false, defaultValue: 'parent' },
   phone: { type: DataTypes.STRING(20) },
   pickupAddress: { type: DataTypes.TEXT, field: 'pickup_address' },
   pickupLat: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lat' },

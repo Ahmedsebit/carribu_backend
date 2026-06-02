@@ -127,7 +127,7 @@ router.get('/:id/dashboard', c.getDashboard);
  *       201:
  *         description: School created
  */
-router.post('/', authorize('super_admin','admin'), c.create);
+router.post('/', authorize('school_admin'), c.create);
 
 /**
  * @swagger
@@ -165,7 +165,7 @@ router.post('/', authorize('super_admin','admin'), c.create);
  *       404:
  *         description: School not found
  */
-router.put('/:id', authorize('super_admin','admin'), c.update);
+router.put('/:id', authorize('school_admin'), c.update);
 
 /**
  * @swagger
@@ -185,6 +185,6 @@ router.put('/:id', authorize('super_admin','admin'), c.update);
  *       404:
  *         description: School not found
  */
-router.delete('/:id', authorize('super_admin'), c.delete);
+router.delete('/:id', authorize('school_admin'), c.delete);
 
 module.exports = router;

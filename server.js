@@ -36,6 +36,7 @@ app.use('/api/location', require('./routes/location'));
 app.use('/api/driver', require('./routes/driver'));
 app.use('/api/parents', require('./routes/parents'));
 app.use('/api/drivers', require('./routes/drivers'));
+app.use('/api/super-admin', require('./routes/superAdmin'));
 app.use('/api/app-versions', require('./routes/appVersions'));
 app.get('/api/health', (req, res) => res.json({ status: 'OK', version: '2.0.0' }));
 app.get('/api', (req, res) => res.json({ name: 'School Transport API v2.0.0', apps: { web: 'Admin Dashboard', driverApp: 'Driver Mobile (React Native)', parentApp: 'Parent Mobile (React Native)' } }));

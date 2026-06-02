@@ -10,7 +10,7 @@ const parentController = require('../controllers/parentController');
  */
 
 router.use(authenticate);
-router.use(authorize('admin', 'coordinator'));
+router.use(authorize('school_admin', 'coordinator'));
 
 /**
  * @swagger
