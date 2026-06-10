@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const http = require('http');
+const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 require('dotenv').config();
@@ -38,6 +39,12 @@ app.use('/api/parents', require('./routes/parents'));
 app.use('/api/drivers', require('./routes/drivers'));
 app.use('/api/super-admin', require('./routes/superAdmin'));
 app.use('/api/app-versions', require('./routes/appVersions'));
+
+// Static file serving for APK downloads
+app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads')));
+
+// SMS-friendly download page
+app.use('/download', require('./routes/download'));
 app.get('/api/health', (req, res) => res.json({ status: 'OK', version: '2.0.0' }));
 app.get('/api', (req, res) => res.json({ name: 'School Transport API v2.0.0', apps: { web: 'Admin Dashboard', driverApp: 'Driver Mobile (React Native)', parentApp: 'Parent Mobile (React Native)' } }));
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: err.message }); });
