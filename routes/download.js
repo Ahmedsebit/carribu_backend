@@ -9,7 +9,11 @@ router.get('/:appName', async (req, res) => {
       order: [['createdAt', 'DESC']],
     });
 
-    const downloadUrl = latest?.downloadUrl || '#';
+    const defaultUrls = {
+      parent: 'https://t3.storageapi.dev/parent-app.apk',
+      driver: '',
+    };
+    const downloadUrl = latest?.downloadUrl || defaultUrls[appName] || '#';
     const version = latest?.version || '1.0.0';
     const releaseNotes = latest?.releaseNotes || '';
 
