@@ -56,7 +56,7 @@ router.get('/:id', c.getById);
  * @swagger
  * /api/routes:
  *   post:
- *     summary: Create a new route
+ *     summary: Create a new route with map waypoints
  *     tags: [Routes]
  *     requestBody:
  *       required: true
@@ -89,6 +89,40 @@ router.get('/:id', c.getById);
  *                 type: array
  *                 items:
  *                   type: integer
+ *               outboundWaypoints:
+ *                 type: array
+ *                 description: Ordered lat/lng points for the outbound journey (A → B)
+ *                 items:
+ *                   type: object
+ *                   required: [lat, lng]
+ *                   properties:
+ *                     lat:
+ *                       type: number
+ *                       example: -1.2921
+ *                     lng:
+ *                       type: number
+ *                       example: 36.8219
+ *                     label:
+ *                       type: string
+ *                       example: "Westlands Roundabout"
+ *                     isStop:
+ *                       type: boolean
+ *                       description: Whether this is a pickup/dropoff stop
+ *               returnWaypoints:
+ *                 type: array
+ *                 description: Ordered lat/lng points for the return journey (B → A)
+ *                 items:
+ *                   type: object
+ *                   required: [lat, lng]
+ *                   properties:
+ *                     lat:
+ *                       type: number
+ *                     lng:
+ *                       type: number
+ *                     label:
+ *                       type: string
+ *                     isStop:
+ *                       type: boolean
  *     responses:
  *       201:
  *         description: Route created

@@ -42,7 +42,7 @@ exports.createParent = async (req, res) => {
     const parent = await User.create({
       schoolId: req.user.schoolId,
       email,
-      passwordHash: tempPassword, // Will be hashed by beforeCreate hook
+      passwordHash: tempPassword,
       firstName,
       lastName,
       role: 'parent',

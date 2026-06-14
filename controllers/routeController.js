@@ -1,4 +1,4 @@
-const { Route, Vehicle, User, Student, RouteStudent } = require('../models');
+const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint } = require('../models');
 const { Op } = require('sequelize');
 exports.getAll = async (req, res) => {
   try {
@@ -6,6 +6,7 @@ exports.getAll = async (req, res) => {
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: User, as: 'driver', attributes: ['id','firstName','lastName','phone'] },
       { model: Student, as: 'students', attributes: ['id','firstName','lastName','grade'], through: { attributes: ['stopOrder'] } },
+      { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ], order: [['name','ASC']] });
     res.json({ routes, total: routes.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -16,6 +17,7 @@ exports.getById = async (req, res) => {
       { model: Vehicle, as: 'vehicle' },
       { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },
       { model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] },
+      { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
     if (!route) return res.status(404).json({ error: 'Route not found.' });
     res.json({ route });
@@ -23,11 +25,35 @@ exports.getById = async (req, res) => {
 };
 exports.create = async (req, res) => {
   try {
-    const route = await Route.create({ ...req.body, schoolId: req.user.schoolId });
-    if (req.body.studentIds && req.body.studentIds.length > 0) {
-      await RouteStudent.bulkCreate(req.body.studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
+    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
+    const route = await Route.create({ ...routeData, schoolId: req.user.schoolId });
+
+    if (studentIds && studentIds.length > 0) {
+      await RouteStudent.bulkCreate(studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
     }
-    const full = await Route.findByPk(route.id, { include: [{ model: Vehicle, as: 'vehicle' }, { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } }, { model: Student, as: 'students', through: { attributes: ['stopOrder'] } }] });
+
+    // Save outbound waypoints (A → B)
+    if (outboundWaypoints && outboundWaypoints.length > 0) {
+      await RouteWaypoint.bulkCreate(outboundWaypoints.map((wp, i) => ({
+        routeId: route.id, leg: 'outbound', orderIndex: i,
+        lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
+      })));
+    }
+
+    // Save return waypoints (B → A)
+    if (returnWaypoints && returnWaypoints.length > 0) {
+      await RouteWaypoint.bulkCreate(returnWaypoints.map((wp, i) => ({
+        routeId: route.id, leg: 'return', orderIndex: i,
+        lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
+      })));
+    }
+
+    const full = await Route.findByPk(route.id, { include: [
+      { model: Vehicle, as: 'vehicle' },
+      { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },
+      { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
+      { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
+    ]});
     res.status(201).json({ message: 'Route created.', route: full });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
@@ -35,12 +61,44 @@ exports.update = async (req, res) => {
   try {
     const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
     if (!route) return res.status(404).json({ error: 'Route not found.' });
-    await route.update(req.body);
-    if (req.body.studentIds) {
+
+    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
+    await route.update(routeData);
+
+    if (studentIds) {
       await RouteStudent.destroy({ where: { routeId: route.id } });
-      await RouteStudent.bulkCreate(req.body.studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
+      await RouteStudent.bulkCreate(studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
     }
-    res.json({ message: 'Route updated.', route });
+
+    // Replace outbound waypoints if provided
+    if (outboundWaypoints) {
+      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'outbound' } });
+      if (outboundWaypoints.length > 0) {
+        await RouteWaypoint.bulkCreate(outboundWaypoints.map((wp, i) => ({
+          routeId: route.id, leg: 'outbound', orderIndex: i,
+          lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
+        })));
+      }
+    }
+
+    // Replace return waypoints if provided
+    if (returnWaypoints) {
+      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'return' } });
+      if (returnWaypoints.length > 0) {
+        await RouteWaypoint.bulkCreate(returnWaypoints.map((wp, i) => ({
+          routeId: route.id, leg: 'return', orderIndex: i,
+          lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
+        })));
+      }
+    }
+
+    const full = await Route.findByPk(route.id, { include: [
+      { model: Vehicle, as: 'vehicle' },
+      { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },
+      { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
+      { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
+    ]});
+    res.json({ message: 'Route updated.', route: full });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.delete = async (req, res) => {

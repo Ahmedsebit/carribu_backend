@@ -8,6 +8,7 @@ const School = sequelize.define('School', {
   phone: { type: DataTypes.STRING(20) },
   email: { type: DataTypes.STRING(150), validate: { isEmail: true } },
   logoUrl: { type: DataTypes.STRING(500), field: 'logo_url' },
+  managedBy: { type: DataTypes.INTEGER, allowNull: true, field: 'managed_by', references: { model: 'users', key: 'id' } },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
 }, { tableName: 'schools' });
 module.exports = School;

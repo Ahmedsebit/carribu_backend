@@ -7,7 +7,7 @@ exports.createSchool = async (req, res) => {
   try {
     const { name, address, city, phone, email, logoUrl } = req.body;
     if (!name) return res.status(400).json({ error: 'School name is required.' });
-    const school = await School.create({ name, address, city, phone, email, logoUrl });
+    const school = await School.create({ name, address, city, phone, email, logoUrl, managedBy: req.user.id });
     res.status(201).json({ message: 'School created.', school });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
@@ -26,6 +26,7 @@ exports.listSchools = async (req, res) => {
         { model: Student, as: 'students', attributes: ['id'] },
         { model: Route, as: 'routes', attributes: ['id'] },
         { model: User, as: 'users', attributes: ['id', 'role'] },
+        { model: User, as: 'manager', attributes: ['id', 'firstName', 'lastName', 'email'] },
       ],
     });
     const result = schools.map(s => ({
@@ -35,6 +36,7 @@ exports.listSchools = async (req, res) => {
       routeCount: s.routes.length,
       adminCount: s.users.filter(u => u.role === 'school_admin').length,
       userCount: s.users.length,
+      manager: s.manager,
       vehicles: undefined,
       students: undefined,
       routes: undefined,
@@ -48,14 +50,40 @@ exports.getSchool = async (req, res) => {
   try {
     const school = await School.findByPk(req.params.id, {
       include: [
-        { model: Vehicle, as: 'vehicles' },
-        { model: User, as: 'users', attributes: { exclude: ['passwordHash'] } },
-        { model: Student, as: 'students' },
-        { model: Route, as: 'routes' },
+        { model: Vehicle, as: 'vehicles', attributes: ['id', 'status'] },
+        { model: User, as: 'users', attributes: ['id', 'role', 'isActive'] },
+        { model: Student, as: 'students', attributes: ['id', 'isActive'] },
+        { model: Route, as: 'routes', attributes: ['id', 'isActive'] },
+        { model: User, as: 'manager', attributes: ['id', 'firstName', 'lastName', 'email'] },
       ],
     });
     if (!school) return res.status(404).json({ error: 'School not found.' });
-    res.json({ school });
+
+    const result = {
+      id: school.id,
+      name: school.name,
+      address: school.address,
+      city: school.city,
+      phone: school.phone,
+      email: school.email,
+      isActive: school.isActive,
+      createdAt: school.createdAt,
+      manager: school.manager,
+      summary: {
+        userCount: school.users.length,
+        adminCount: school.users.filter(u => u.role === 'school_admin').length,
+        driverCount: school.users.filter(u => u.role === 'driver').length,
+        coordinatorCount: school.users.filter(u => u.role === 'coordinator').length,
+        parentCount: school.users.filter(u => u.role === 'parent').length,
+        studentCount: school.students.length,
+        activeStudents: school.students.filter(s => s.isActive).length,
+        vehicleCount: school.vehicles.length,
+        activeVehicles: school.vehicles.filter(v => v.status === 'active').length,
+        routeCount: school.routes.length,
+        activeRoutes: school.routes.filter(r => r.isActive).length,
+      },
+    };
+    res.json({ school: result });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -63,8 +91,8 @@ exports.updateSchool = async (req, res) => {
   try {
     const school = await School.findByPk(req.params.id);
     if (!school) return res.status(404).json({ error: 'School not found.' });
-    const { name, address, city, phone, email, logoUrl, isActive } = req.body;
-    await school.update({ name, address, city, phone, email, logoUrl, isActive });
+    const { name, address, city, phone, email, logoUrl, isActive, managedBy } = req.body;
+    await school.update({ name, address, city, phone, email, logoUrl, isActive, managedBy });
     res.json({ message: 'School updated.', school });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
