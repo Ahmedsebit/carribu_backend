@@ -19,14 +19,23 @@ exports.register = async (req, res) => {
 };
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ where: { email }, include: [{ model: School, as: 'school', attributes: ['id','name'] }] });
+    const { email, username, password } = req.body;
+    const loginIdentifier = email || username;
+    if (!loginIdentifier || !password) {
+      return res.status(400).json({ error: 'email/username and password are required.' });
+    }
+    // Allow login by email or phone number (username)
+    const { Op } = require('sequelize');
+    const user = await User.findOne({
+      where: { [Op.or]: [{ email: loginIdentifier }, { phone: loginIdentifier }] },
+      include: [{ model: School, as: 'school', attributes: ['id','name'] }],
+    });
     if (!user || !(await user.validPassword(password))) {
-      await logLogin(null, email, req.ip, false);
-      return res.status(401).json({ error: 'Invalid email or password.' });
+      await logLogin(null, loginIdentifier, req.ip, false);
+      return res.status(401).json({ error: 'Invalid credentials.' });
     }
     if (!user.isActive) return res.status(403).json({ error: 'Account deactivated.' });
-    await logLogin(user.id, email, req.ip, true);
+    await logLogin(user.id, loginIdentifier, req.ip, true);
     res.json({ message: 'Login successful.', token: generateToken(user), user });
   } catch (err) { res.status(500).json({ error: 'Login failed.', details: err.message }); }
 };

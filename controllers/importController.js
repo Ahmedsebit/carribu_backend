@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { parse } = require('csv-parse/sync');
-const { User, Student, sequelize } = require('../models');
+const { User, Student, School, sequelize } = require('../models');
+const { sendWelcomeWhatsApp } = require('../utils/whatsapp');
 
 const generatePassword = () => crypto.randomBytes(4).toString('hex');
 
@@ -113,6 +114,7 @@ function splitName(fullName) {
 /**
  * POST /api/import/parents-students
  * Bulk import parents and students from a CSV file
+ * Uses phone number as username, generates password, sends via WhatsApp
  */
 exports.importParentsAndStudents = async (req, res) => {
   const transaction = await sequelize.transaction();
@@ -130,24 +132,39 @@ exports.importParentsAndStudents = async (req, res) => {
       return res.status(400).json({ error: 'No valid parent/student data found in CSV.' });
     }
 
+    const school = await School.findByPk(schoolId);
+    const schoolName = school?.name || 'Your School';
+    const sendWhatsApp = req.body.sendWhatsApp !== 'false'; // default true
+
     const results = {
       parentsCreated: 0,
       studentsCreated: 0,
+      whatsappSent: 0,
+      whatsappFailed: 0,
       skipped: [],
       errors: [],
+      credentials: [], // returned so admin can see generated passwords
     };
 
     for (const parentData of parsedParents) {
       try {
         const { firstName, lastName } = splitName(parentData.name);
         const phone = normalizePhone(parentData.phone);
+        // Use phone as username; email is generated placeholder for DB constraint
         const email = generateEmail(parentData.name, schoolDomain);
 
-        // Check if parent already exists by email
-        let parent = await User.findOne({ where: { email }, transaction });
-
+        // Check if parent already exists by phone or email
+        let parent = null;
+        if (phone) {
+          parent = await User.findOne({ where: { phone }, transaction });
+        }
         if (!parent) {
-          const tempPassword = generatePassword();
+          parent = await User.findOne({ where: { email }, transaction });
+        }
+
+        let tempPassword = null;
+        if (!parent) {
+          tempPassword = generatePassword();
           parent = await User.create({
             schoolId,
             email,
@@ -158,8 +175,14 @@ exports.importParentsAndStudents = async (req, res) => {
             phone,
           }, { transaction });
           results.parentsCreated++;
+          results.credentials.push({
+            name: parentData.name,
+            username: phone || email,
+            password: tempPassword,
+            phone,
+          });
         } else {
-          results.skipped.push(`Parent "${parentData.name}" already exists (${email})`);
+          results.skipped.push(`Parent "${parentData.name}" already exists (phone: ${phone})`);
         }
 
         // Create students
@@ -181,11 +204,32 @@ exports.importParentsAndStudents = async (req, res) => {
 
     await transaction.commit();
 
+    // Send WhatsApp messages after successful commit (non-blocking)
+    if (sendWhatsApp) {
+      for (const cred of results.credentials) {
+        if (cred.phone) {
+          try {
+            const waResult = await sendWelcomeWhatsApp(
+              cred.phone,
+              cred.name.split(' ')[0],
+              cred.username,
+              cred.password,
+              schoolName
+            );
+            if (waResult.sent) results.whatsappSent++;
+            else results.whatsappFailed++;
+          } catch {
+            results.whatsappFailed++;
+          }
+        }
+      }
+    }
+
     // Clean up uploaded file
     fs.unlinkSync(req.file.path);
 
     res.status(201).json({
-      message: `Import complete. ${results.parentsCreated} parents and ${results.studentsCreated} students created.`,
+      message: `Import complete. ${results.parentsCreated} parents and ${results.studentsCreated} students created. WhatsApp: ${results.whatsappSent} sent, ${results.whatsappFailed} failed.`,
       ...results,
     });
   } catch (err) {
