@@ -39,6 +39,7 @@ app.use('/api/parents', require('./routes/parents'));
 app.use('/api/drivers', require('./routes/drivers'));
 app.use('/api/super-admin', require('./routes/superAdmin'));
 app.use('/api/app-versions', require('./routes/appVersions'));
+app.use('/api/import', require('./routes/import'));
 
 // Static file serving for APK downloads
 app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads')));
