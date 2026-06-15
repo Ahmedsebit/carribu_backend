@@ -57,7 +57,23 @@ if (require.main === module) {
   (async () => {
     try {
       await sequelize.authenticate(); console.log('✅ DB connected.');
-      await sequelize.sync({ alter: process.env.NODE_ENV === 'development' }); console.log('✅ DB synced (11 tables).');
+      await sequelize.sync({ alter: process.env.NODE_ENV === 'development' }); console.log('✅ DB synced.');
+
+      // Auto-create admin accounts from ADMIN_ACCOUNTS env var
+      if (process.env.ADMIN_ACCOUNTS) {
+        try {
+          const { User } = require('./models');
+          const accounts = JSON.parse(process.env.ADMIN_ACCOUNTS);
+          for (const acct of accounts) {
+            const existing = await User.findOne({ where: { email: acct.email } });
+            if (!existing) {
+              await User.create({ email: acct.email, passwordHash: acct.password, firstName: acct.firstName || 'Admin', lastName: acct.lastName || 'User', role: acct.role || 'super_admin', phone: acct.phone || null, schoolId: acct.schoolId || null });
+              console.log(`✅ Created ${acct.role || 'super_admin'}: ${acct.email}`);
+            }
+          }
+        } catch (e) { console.warn('⚠️ Admin account setup:', e.message); }
+      }
+
       server.listen(PORT, () => { console.log(`🚀 Server: http://localhost:${PORT}`); console.log(`📋 API: http://localhost:${PORT}/api`); console.log(`🔌 Socket.IO ready`); });
     } catch (err) { console.error('❌ Start failed:', err); process.exit(1); }
   })();
