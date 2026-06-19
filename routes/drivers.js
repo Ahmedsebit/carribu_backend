@@ -129,6 +129,26 @@ router.put('/:id', c.updateDriver);
  *       404:
  *         description: Driver not found
  */
+/**
+ * @swagger
+ * /api/drivers/{id}/reset-password:
+ *   post:
+ *     summary: Reset a driver's password and email it to them
+ *     tags: [Drivers]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Password reset and emailed
+ *       404:
+ *         description: Driver not found
+ */
+router.post('/:id/reset-password', c.resetPassword);
+
 router.delete('/:id', c.deleteDriver);
 
 module.exports = router;

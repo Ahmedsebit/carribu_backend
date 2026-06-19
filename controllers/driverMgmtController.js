@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { User, Vehicle, Route, School } = require('../models');
-const { sendWelcomeEmail } = require('../utils/email');
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('../utils/email');
 
 const generatePassword = () => crypto.randomBytes(4).toString('hex');
 
@@ -68,6 +68,26 @@ exports.updateDriver = async (req, res) => {
     const { firstName, lastName, phone } = req.body;
     await driver.update({ firstName, lastName, phone });
     res.json({ driver: { ...driver.toJSON(), passwordHash: undefined }, message: 'Driver updated.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const driver = await User.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId, role: 'driver' } });
+    if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+    const newPassword = generatePassword();
+    await driver.update({ passwordHash: newPassword });
+
+    const school = await School.findByPk(req.user.schoolId);
+    const emailResult = await sendPasswordResetEmail(driver.email, driver.firstName, newPassword, school?.name || 'Your School');
+
+    res.json({
+      message: 'Password reset successfully.',
+      tempPassword: newPassword,
+      emailSent: emailResult.sent || false,
+      previewUrl: emailResult.previewUrl || null,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
