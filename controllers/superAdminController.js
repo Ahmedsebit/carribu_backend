@@ -1,5 +1,9 @@
+const crypto = require('crypto');
 const { School, User, Vehicle, Student, Route, Trip } = require('../models');
 const { Op } = require('sequelize');
+const { sendPasswordResetEmail } = require('../utils/email');
+
+const generatePassword = () => crypto.randomBytes(4).toString('hex');
 
 // --- School Management ---
 
@@ -156,6 +160,27 @@ exports.removeSchoolAdmin = async (req, res) => {
     if (user.role !== 'school_admin') return res.status(400).json({ error: 'User is not a school admin.' });
     await user.update({ isActive: false });
     res.json({ message: 'School admin deactivated.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.resetAdminPassword = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    if (user.role !== 'school_admin') return res.status(400).json({ error: 'User is not a school admin.' });
+
+    const newPassword = generatePassword();
+    await user.update({ passwordHash: newPassword });
+
+    const school = await School.findByPk(user.schoolId);
+    const emailResult = await sendPasswordResetEmail(user.email, user.firstName, newPassword, school?.name || 'Your School');
+
+    res.json({
+      message: 'Admin password reset successfully.',
+      tempPassword: newPassword,
+      emailSent: emailResult.sent || false,
+      previewUrl: emailResult.previewUrl || null,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 

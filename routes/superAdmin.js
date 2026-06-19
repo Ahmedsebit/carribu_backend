@@ -301,6 +301,26 @@ router.post('/admins', c.createSchoolAdmin);
  *       404:
  *         description: User not found
  */
+/**
+ * @swagger
+ * /api/super-admin/admins/{id}/reset-password:
+ *   post:
+ *     summary: Reset a school admin's password and email it to them
+ *     tags: [Super Admin]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Password reset and emailed
+ *       404:
+ *         description: User not found
+ */
+router.post('/admins/:id/reset-password', c.resetAdminPassword);
+
 router.delete('/admins/:id', c.removeSchoolAdmin);
 
 // --- Monitoring Routes ---
