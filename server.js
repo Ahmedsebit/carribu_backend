@@ -57,7 +57,7 @@ if (require.main === module) {
   (async () => {
     try {
       await sequelize.authenticate(); console.log('✅ DB connected.');
-      await sequelize.sync({ alter: process.env.NODE_ENV === 'development' }); console.log('✅ DB synced.');
+      await sequelize.sync(); console.log('✅ DB synced.');
 
       // Auto-create admin accounts from ADMIN_ACCOUNTS env var
       if (process.env.ADMIN_ACCOUNTS) {
