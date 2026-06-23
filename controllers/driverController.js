@@ -13,7 +13,7 @@ exports.getMyTrips = async (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().split('T')[0];
     const trips = await Trip.findAll({ where: { driverId: req.user.id, scheduledDate: date }, include: [
-      { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
+      { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ], order: [['created_at','ASC']] });
@@ -26,7 +26,8 @@ exports.getMyTrips = async (req, res) => {
         if (sl.find(l => l.action === 'absent')) status = 'absent';
         else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
         else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
-        return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
+        else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
+        return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress, dropoffLat: s.parent?.dropoffLat, dropoffLng: s.parent?.dropoffLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
       });
       t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
       return t;
@@ -37,7 +38,7 @@ exports.getMyTrips = async (req, res) => {
 exports.getActiveTrip = async (req, res) => {
   try {
     const trip = await Trip.findOne({ where: { driverId: req.user.id, status: 'in_progress' }, include: [
-      { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
+      { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ]});
@@ -50,10 +51,11 @@ exports.getActiveTrip = async (req, res) => {
       if (sl.find(l => l.action === 'absent')) status = 'absent';
       else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
       else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
-      return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
+      else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
+      return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress, dropoffLat: s.parent?.dropoffLat, dropoffLng: s.parent?.dropoffLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
     });
     t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
-    t.stats = { total: t.pickupList.length, onBus: t.pickupList.filter(s => s.status==='on_bus').length, droppedOff: t.pickupList.filter(s => s.status==='dropped_off').length, absent: t.pickupList.filter(s => s.status==='absent').length, pending: t.pickupList.filter(s => s.status==='pending').length };
+    t.stats = { total: t.pickupList.length, onBus: t.pickupList.filter(s => s.status==='on_bus').length, droppedOff: t.pickupList.filter(s => s.status==='dropped_off').length, absent: t.pickupList.filter(s => s.status==='absent').length, pending: t.pickupList.filter(s => s.status==='pending').length, arrived: t.pickupList.filter(s => s.status==='arrived').length };
     res.json({ activeTrip: t });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

@@ -13,11 +13,36 @@ exports.getAll = async (req, res) => {
     if (req.query.status) where.status = req.query.status;
     if (req.query.date) where.scheduledDate = req.query.date;
     const trips = await Trip.findAll({ where, include: [
-      { model: Route, as: 'route', where: { schoolId: req.user.schoolId }, attributes: ['id','name'] },
+      { model: Route, as: 'route', where: { schoolId: req.user.schoolId }, attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] } }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model'] },
       { model: User, as: 'driver', attributes: ['id','firstName','lastName'] },
+      { model: TripLog, as: 'logs' },
     ], order: [['scheduled_date','DESC'],['created_at','DESC']] });
-    res.json({ trips, total: trips.length });
+    const result = trips.map(trip => {
+      const t = trip.toJSON();
+      const students = t.route?.students || [];
+      const logs = t.logs || [];
+      const studentStats = students.map(s => {
+        const sl = logs.filter(l => l.studentId === s.id);
+        let status = 'pending';
+        if (sl.find(l => l.action === 'absent')) status = 'absent';
+        else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
+        else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
+        else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
+        return status;
+      });
+      t.studentStats = {
+        total: students.length,
+        pending: studentStats.filter(s => s === 'pending').length,
+        arrived: studentStats.filter(s => s === 'arrived').length,
+        onBus: studentStats.filter(s => s === 'on_bus').length,
+        droppedOff: studentStats.filter(s => s === 'dropped_off').length,
+        absent: studentStats.filter(s => s === 'absent').length,
+      };
+      delete t.logs;
+      return t;
+    });
+    res.json({ trips: result, total: result.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.create = async (req, res) => {
