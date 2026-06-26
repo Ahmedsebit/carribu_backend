@@ -1,8 +1,9 @@
 const crypto = require('crypto');
 const { User, Student, School } = require('../models');
-const { sendWelcomeEmail } = require('../utils/email');
+const { normalizePhoneE164 } = require('../utils/phone');
 
-const generatePassword = () => crypto.randomBytes(4).toString('hex'); // 8-char random password
+// Random placeholder hash for pending accounts; parents set their own password in the app
+const generatePlaceholderPassword = () => crypto.randomBytes(16).toString('hex');
 
 exports.listParents = async (req, res) => {
   try {
@@ -31,36 +32,37 @@ exports.getParent = async (req, res) => {
 exports.createParent = async (req, res) => {
   try {
     const { email, firstName, lastName, phone, pickupAddress, pickupLat, pickupLng } = req.body;
-    if (!email || !firstName || !lastName) {
-      return res.status(400).json({ error: 'email, firstName, and lastName are required' });
+    if (!email || !firstName || !lastName || !phone) {
+      return res.status(400).json({ error: 'email, firstName, lastName, and phone are required' });
     }
 
-    const existing = await User.findOne({ where: { email } });
-    if (existing) return res.status(409).json({ error: 'A user with this email already exists' });
+    const normalizedPhone = normalizePhoneE164(phone);
+    if (!normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
 
-    const tempPassword = generatePassword();
+    const existingEmail = await User.findOne({ where: { email } });
+    if (existingEmail) return res.status(409).json({ error: 'A user with this email already exists' });
+
+    const existingPhone = await User.findOne({ where: { phone: normalizedPhone, role: 'parent', isActive: true } });
+    if (existingPhone) return res.status(409).json({ error: 'A parent with this phone number already exists' });
+
+    // Create the account in a pending state — the parent sets their own password in the app
     const parent = await User.create({
       schoolId: req.user.schoolId,
       email,
-      passwordHash: tempPassword,
+      passwordHash: generatePlaceholderPassword(),
       firstName,
       lastName,
       role: 'parent',
-      phone,
+      phone: normalizedPhone,
       pickupAddress,
       pickupLat,
       pickupLng,
+      mustSetPassword: true,
     });
-
-    // Send welcome email
-    const school = await School.findByPk(req.user.schoolId);
-    const emailResult = await sendWelcomeEmail(email, firstName, tempPassword, school?.name || 'Your School');
 
     res.status(201).json({
       parent: { ...parent.toJSON(), passwordHash: undefined },
-      tempPassword,
-      emailSent: emailResult.sent || false,
-      previewUrl: emailResult.previewUrl || null,
+      message: 'Parent added. They can set their password in the app using their phone number.',
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

@@ -3,9 +3,10 @@ const path = require('path');
 const crypto = require('crypto');
 const { parse } = require('csv-parse/sync');
 const { User, Student, School, sequelize } = require('../models');
-const { sendWelcomeWhatsApp } = require('../utils/whatsapp');
+const { normalizePhoneE164 } = require('../utils/phone');
 
-const generatePassword = () => crypto.randomBytes(4).toString('hex');
+// Random placeholder hash for pending accounts; parents set their own password in the app
+const generatePlaceholderPassword = () => crypto.randomBytes(16).toString('hex');
 
 /**
  * Normalize phone number: strip spaces, ensure leading 0 or +254
@@ -114,7 +115,7 @@ function splitName(fullName) {
 /**
  * POST /api/import/parents-students
  * Bulk import parents and students from a CSV file
- * Uses phone number as username, generates password, sends via WhatsApp
+ * Uses phone number as username, generates password, sends via SMS
  */
 exports.importParentsAndStudents = async (req, res) => {
   const transaction = await sequelize.transaction();
@@ -134,22 +135,19 @@ exports.importParentsAndStudents = async (req, res) => {
 
     const school = await School.findByPk(schoolId);
     const schoolName = school?.name || 'Your School';
-    const sendWhatsApp = req.body.sendWhatsApp !== 'false'; // default true
 
     const results = {
       parentsCreated: 0,
       studentsCreated: 0,
-      whatsappSent: 0,
-      whatsappFailed: 0,
       skipped: [],
       errors: [],
-      credentials: [], // returned so admin can see generated passwords
+      created: [], // returned so admin can see who was added
     };
 
     for (const parentData of parsedParents) {
       try {
         const { firstName, lastName } = splitName(parentData.name);
-        const phone = normalizePhone(parentData.phone);
+        const phone = normalizePhoneE164(parentData.phone);
         // Use phone as username; email is generated placeholder for DB constraint
         const email = generateEmail(parentData.name, schoolDomain);
 
@@ -162,23 +160,20 @@ exports.importParentsAndStudents = async (req, res) => {
           parent = await User.findOne({ where: { email }, transaction });
         }
 
-        let tempPassword = null;
         if (!parent) {
-          tempPassword = generatePassword();
           parent = await User.create({
             schoolId,
             email,
-            passwordHash: tempPassword,
+            passwordHash: generatePlaceholderPassword(),
             firstName,
             lastName,
             role: 'parent',
             phone,
+            mustSetPassword: true,
           }, { transaction });
           results.parentsCreated++;
-          results.credentials.push({
+          results.created.push({
             name: parentData.name,
-            username: phone || email,
-            password: tempPassword,
             phone,
           });
         } else {
@@ -204,32 +199,11 @@ exports.importParentsAndStudents = async (req, res) => {
 
     await transaction.commit();
 
-    // Send WhatsApp messages after successful commit (non-blocking)
-    if (sendWhatsApp) {
-      for (const cred of results.credentials) {
-        if (cred.phone) {
-          try {
-            const waResult = await sendWelcomeWhatsApp(
-              cred.phone,
-              cred.name.split(' ')[0],
-              cred.username,
-              cred.password,
-              schoolName
-            );
-            if (waResult.sent) results.whatsappSent++;
-            else results.whatsappFailed++;
-          } catch {
-            results.whatsappFailed++;
-          }
-        }
-      }
-    }
-
     // Clean up uploaded file
     fs.unlinkSync(req.file.path);
 
     res.status(201).json({
-      message: `Import complete. ${results.parentsCreated} parents and ${results.studentsCreated} students created. WhatsApp: ${results.whatsappSent} sent, ${results.whatsappFailed} failed.`,
+      message: `Import complete. ${results.parentsCreated} parents and ${results.studentsCreated} students created. Parents can set their password in the app using their phone number.`,
       ...results,
     });
   } catch (err) {

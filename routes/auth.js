@@ -112,6 +112,53 @@ router.post('/login', authController.login);
 
 /**
  * @swagger
+ * /api/auth/registration-status:
+ *   post:
+ *     summary: Check if a phone number has a pending parent registration to complete
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [phone]
+ *             properties:
+ *               phone: { type: string, example: '+254712345678' }
+ *     responses:
+ *       200:
+ *         description: Whether a pending registration exists
+ */
+router.post('/registration-status', authController.registrationStatus);
+
+/**
+ * @swagger
+ * /api/auth/complete-registration:
+ *   post:
+ *     summary: Parent completes registration by setting their own password
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [phone, newPassword]
+ *             properties:
+ *               phone: { type: string, example: '+254712345678' }
+ *               newPassword: { type: string, minLength: 6, example: secret123 }
+ *     responses:
+ *       200:
+ *         description: Registration complete; returns auth token
+ *       404:
+ *         description: No pending account found
+ */
+router.post('/complete-registration', authController.completeRegistration);
+
+/**
+ * @swagger
  * /api/auth/me:
  *   get:
  *     summary: Get current authenticated user profile

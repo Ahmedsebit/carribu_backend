@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { User, School } = require('../models');
 const { logLogin } = require('../middleware/auditLog');
+const { normalizePhoneE164 } = require('../utils/phone');
 const generateToken = (user) => jwt.sign(
   { id: user.id, email: user.email, role: user.role, schoolId: user.schoolId },
   process.env.JWT_SECRET || 'default-secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
@@ -24,10 +25,13 @@ exports.login = async (req, res) => {
     if (!loginIdentifier || !password) {
       return res.status(400).json({ error: 'email/username and password are required.' });
     }
-    // Allow login by email or phone number (username)
+    // Allow login by email or phone number (in any format)
     const { Op } = require('sequelize');
+    const normalizedPhone = normalizePhoneE164(loginIdentifier);
+    const orConditions = [{ email: loginIdentifier }, { phone: loginIdentifier }];
+    if (normalizedPhone) orConditions.push({ phone: normalizedPhone });
     const user = await User.findOne({
-      where: { [Op.or]: [{ email: loginIdentifier }, { phone: loginIdentifier }] },
+      where: { [Op.or]: orConditions },
       include: [{ model: School, as: 'school', attributes: ['id','name'] }],
     });
     if (!user || !(await user.validPassword(password))) {
@@ -45,6 +49,49 @@ exports.getMe = async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found.' });
     res.json({ user });
   } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// Public: check whether a phone number has a pending parent registration to complete
+exports.registrationStatus = async (req, res) => {
+  try {
+    const phone = normalizePhoneE164(req.body.phone);
+    if (!phone) return res.status(400).json({ error: 'phone is required.' });
+    const parents = await User.findAll({
+      where: { phone, role: 'parent', mustSetPassword: true, isActive: true },
+      include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
+    });
+    if (parents.length !== 1) return res.json({ found: false });
+    const p = parents[0];
+    res.json({ found: true, firstName: p.firstName, schoolName: p.school?.name || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// Public: a parent completes their registration by setting their own password
+exports.completeRegistration = async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+    const phone = normalizePhoneE164(req.body.phone);
+    if (!phone || !newPassword) return res.status(400).json({ error: 'phone and newPassword are required.' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+    const parents = await User.findAll({
+      where: { phone, role: 'parent', mustSetPassword: true, isActive: true },
+      include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
+    });
+    if (parents.length === 0) {
+      return res.status(404).json({ error: 'No pending account found for this phone number. Please contact your school.' });
+    }
+    if (parents.length > 1) {
+      return res.status(409).json({ error: 'Multiple accounts found for this phone number. Please contact your school.' });
+    }
+
+    const user = parents[0];
+    user.passwordHash = newPassword;
+    user.mustSetPassword = false;
+    await user.save();
+
+    res.json({ message: 'Registration complete.', token: generateToken(user), user });
+  } catch (err) { res.status(500).json({ error: 'Could not complete registration.', details: err.message }); }
 };
 exports.changePassword = async (req, res) => {
   try {

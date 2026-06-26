@@ -14,6 +14,7 @@ const User = sequelize.define('User', {
   pickupLat: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lat' },
   pickupLng: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lng' },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
+  mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
 }, {
   tableName: 'users',
   hooks: {
