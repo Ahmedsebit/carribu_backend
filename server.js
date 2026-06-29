@@ -57,7 +57,11 @@ if (require.main === module) {
   (async () => {
     try {
       await sequelize.authenticate(); console.log('✅ DB connected.');
-      await sequelize.sync(); console.log('✅ DB synced.');
+      // DB_SYNC: 'safe' (create only), 'alter' (add/update columns, keep data), 'force' (drop+recreate).
+      // Defaults to 'alter' so model changes apply to existing tables without dropping data.
+      const syncMode = (process.env.DB_SYNC || 'alter').toLowerCase();
+      const syncOpts = syncMode === 'force' ? { force: true } : syncMode === 'safe' ? {} : { alter: true };
+      await sequelize.sync(syncOpts); console.log(`✅ DB synced (mode: ${syncMode}).`);
 
       // Auto-create admin accounts from ADMIN_ACCOUNTS env var
       if (process.env.ADMIN_ACCOUNTS) {
