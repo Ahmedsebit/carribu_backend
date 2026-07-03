@@ -13,6 +13,9 @@ const User = sequelize.define('User', {
   pickupAddress: { type: DataTypes.TEXT, field: 'pickup_address' },
   pickupLat: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lat' },
   pickupLng: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lng' },
+  dropoffAddress: { type: DataTypes.TEXT, field: 'dropoff_address' },
+  dropoffLat: { type: DataTypes.DECIMAL(10,7), field: 'dropoff_lat' },
+  dropoffLng: { type: DataTypes.DECIMAL(10,7), field: 'dropoff_lng' },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
   mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
 }, {

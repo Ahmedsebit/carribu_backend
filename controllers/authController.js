@@ -108,13 +108,16 @@ exports.changePassword = async (req, res) => {
 };
 exports.updateProfile = async (req, res) => {
   try {
-    const { phone, pickupAddress, pickupLat, pickupLng } = req.body;
+    const { phone, pickupAddress, pickupLat, pickupLng, dropoffAddress, dropoffLat, dropoffLng } = req.body;
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
     if (phone !== undefined) user.phone = phone;
     if (pickupAddress !== undefined) user.pickupAddress = pickupAddress;
     if (pickupLat !== undefined) user.pickupLat = pickupLat;
     if (pickupLng !== undefined) user.pickupLng = pickupLng;
+    if (dropoffAddress !== undefined) user.dropoffAddress = dropoffAddress;
+    if (dropoffLat !== undefined) user.dropoffLat = dropoffLat;
+    if (dropoffLng !== undefined) user.dropoffLng = dropoffLng;
     await user.save();
     const updated = await User.findByPk(user.id, { attributes: { exclude: ['passwordHash'] }, include: [{ model: School, as: 'school', attributes: ['id','name'] }] });
     res.json({ user: updated, message: 'Profile updated.' });
