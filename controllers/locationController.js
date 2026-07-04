@@ -1,4 +1,5 @@
 const { BusLocation, Trip, Route, Vehicle, User, Student, TripLog, Message, School } = require('../models');
+const { notifyTrip, notifyUser } = require('../socket');
 const toRadians = deg => deg * Math.PI / 180;
 const distanceInMeters = (lat1, lng1, lat2, lng2) => {
   const R = 6371000;
@@ -15,6 +16,18 @@ exports.updateLocation = async (req, res) => {
     const trip = await Trip.findOne({ where: { id: tripId, driverId: req.user.id, status: 'in_progress' } });
     if (!trip) return res.status(404).json({ error: 'Active trip not found.' });
     const loc = await BusLocation.create({ tripId, vehicleId: trip.vehicleId, driverId: req.user.id, lat, lng, speed, heading, recordedAt: new Date() });
+
+    // Broadcast the new position to everyone tracking this trip. This is a
+    // fallback for the driver app's direct `driver-location` socket emit, so
+    // parents still get live location even if that socket emit is dropped.
+    notifyTrip(tripId, 'location-update', {
+      tripId,
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      speed: speed != null ? parseFloat(speed) : null,
+      heading: heading != null ? parseFloat(heading) : null,
+      timestamp: Date.now(),
+    });
 
     const route = await Route.findByPk(trip.routeId, { include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] }] }] });
     if (route) {
@@ -43,6 +56,8 @@ exports.updateLocation = async (req, res) => {
           const recent = await Message.findOne({ where: { receiverId: student.parent.id, senderId: req.user.id, tripId, messageType: 'system', content: { [require('sequelize').Op.like]: '%min away from ' + student.firstName + '%' } }, order: [['created_at','DESC']] });
           if (!recent || (new Date() - new Date(recent.createdAt)) > 5 * 60 * 1000) {
             await Message.create({ schoolId: req.user.schoolId, senderId: req.user.id, receiverId: student.parent.id, tripId, content, messageType: 'system' });
+            // Push the proximity alert live so the parent gets a real-time popup.
+            notifyUser(student.parent.id, 'driver-approaching', { tripId, studentName: student.firstName, etaMinutes: totalMin, message: content });
           }
         }
       }
@@ -59,6 +74,8 @@ exports.updateLocation = async (req, res) => {
           const recent = await Message.findOne({ where: { receiverId: parent.id, senderId: req.user.id, tripId, messageType: 'arrival' }, order: [['created_at','DESC']] });
           if (!recent || (new Date() - new Date(recent.createdAt)) > 10 * 60 * 1000) {
             await Message.create({ schoolId: req.user.schoolId, senderId: req.user.id, receiverId: parent.id, tripId, content, messageType: 'arrival' });
+            // Push the "within 200m" alert live so the parent gets a real-time popup.
+            notifyUser(parent.id, 'driver-approaching', { tripId, studentName: nearest.student.firstName, message: content });
           }
         }
       }

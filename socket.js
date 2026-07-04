@@ -1,6 +1,16 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const { User, Trip, Route, Student, RouteStudent } = require('./models');
+const { sendPushToUser } = require('./services/push');
+
+// Human-readable titles for the phone tray notification, keyed by socket event.
+const PUSH_TITLES = {
+  'trip-started': '🚌 Trip Started',
+  'driver-approaching': '🚌 Driver Approaching',
+  'driver-arrived': '📍 Bus Arrived',
+  'student-picked-up': '✅ Picked Up',
+  'new-message': '💬 New Message',
+};
 
 let io;
 
@@ -82,6 +92,11 @@ function getIO() {
 // Emit notification to specific user
 function notifyUser(userId, event, data) {
   if (io) io.to(`user:${userId}`).emit(event, data);
+  // Also deliver a phone tray push so parents/drivers are alerted when the
+  // app is backgrounded or closed (socket Alerts only fire in the foreground).
+  if (data && data.message && PUSH_TITLES[event]) {
+    sendPushToUser(userId, PUSH_TITLES[event], data.message, { event, ...data }).catch(() => {});
+  }
 }
 
 // Emit to all users in a trip room

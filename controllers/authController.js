@@ -123,3 +123,14 @@ exports.updateProfile = async (req, res) => {
     res.json({ user: updated, message: 'Profile updated.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
+
+exports.savePushToken = async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    user.expoPushToken = pushToken || null;
+    await user.save();
+    res.json({ message: 'Push token saved.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};

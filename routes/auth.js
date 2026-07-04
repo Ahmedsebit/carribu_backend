@@ -245,4 +245,26 @@ router.put('/change-password', authenticate, authController.changePassword);
  */
 router.put('/profile', authenticate, authController.updateProfile);
 
+/**
+ * @swagger
+ * /api/auth/push-token:
+ *   put:
+ *     summary: Save the current user's Expo push token for tray notifications
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               pushToken:
+ *                 type: string
+ *                 example: ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]
+ *     responses:
+ *       200:
+ *         description: Push token saved
+ */
+router.put('/push-token', authenticate, authController.savePushToken);
+
 module.exports = router;
