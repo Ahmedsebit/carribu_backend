@@ -89,13 +89,63 @@ npm run dev
 npm start
 ```
 
-The server will auto-sync tables on startup in development mode.
+The server runs database migrations automatically on startup (before it begins
+listening), so the schema is always brought up to date. See
+[Database migrations](#database-migrations) below.
 
 ### 6. Seed sample data (optional)
 
 ```bash
 npm run db:seed
 ```
+
+## Database migrations
+
+Schema changes are managed with [umzug](https://github.com/sequelize/umzug)
+migrations in `migrations/`, tracked in the `sequelize_meta` table.
+
+- **On startup** the server runs all pending migrations before listening.
+- **Existing databases** created before migrations existed (via the old
+  `sequelize.sync`) are detected automatically and *baselined* — the baseline
+  migration is recorded as already applied so your data is never dropped.
+
+### Commands
+
+```bash
+npm run db:migrate          # apply all pending migrations
+npm run db:migrate:status   # show executed + pending migrations
+npm run db:migrate:pending  # list pending migrations
+npm run db:migrate:undo     # revert the last migration
+```
+
+### Adding a migration
+
+Create `migrations/000N-description.js` exporting `up`/`down`:
+
+```js
+module.exports = {
+  async up({ context: queryInterface }) {
+    await queryInterface.addColumn('users', 'nickname', {
+      type: require('sequelize').DataTypes.STRING, allowNull: true,
+    });
+  },
+  async down({ context: queryInterface }) {
+    await queryInterface.removeColumn('users', 'nickname');
+  },
+};
+```
+
+Migrations run in filename order, so keep the numeric prefix increasing.
+
+> **Note:** `migrations/sql/0001-baseline.sql` is the frozen initial schema,
+> generated from the models via `node scripts/gen-baseline.js`. Don't edit it by
+> hand — subsequent changes belong in new migration files.
+
+### Legacy `DB_SYNC` (deprecated)
+
+Setting `DB_SYNC` (`alter`/`safe`/`force`) makes startup fall back to
+`sequelize.sync` and **skips migrations**. This is only for local
+experimentation; leave it unset so migrations manage the schema.
 
 ## API Documentation (Swagger)
 

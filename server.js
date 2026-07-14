@@ -57,11 +57,18 @@ if (require.main === module) {
   (async () => {
     try {
       await sequelize.authenticate(); console.log('✅ DB connected.');
-      // DB_SYNC: 'safe' (create only), 'alter' (add/update columns, keep data), 'force' (drop+recreate).
-      // Defaults to 'alter' so model changes apply to existing tables without dropping data.
-      const syncMode = (process.env.DB_SYNC || 'alter').toLowerCase();
-      const syncOpts = syncMode === 'force' ? { force: true } : syncMode === 'safe' ? {} : { alter: true };
-      await sequelize.sync(syncOpts); console.log(`✅ DB synced (mode: ${syncMode}).`);
+      // Schema is managed by migrations (see migrations/ + scripts/migrate.js),
+      // which run automatically on startup before the server listens.
+      // Set DB_SYNC explicitly to fall back to legacy sequelize.sync behaviour
+      // (e.g. DB_SYNC=alter) — not recommended outside local experimentation.
+      if (process.env.DB_SYNC) {
+        const syncMode = process.env.DB_SYNC.toLowerCase();
+        const syncOpts = syncMode === 'force' ? { force: true } : syncMode === 'safe' ? {} : { alter: true };
+        await sequelize.sync(syncOpts); console.log(`⚠️  DB synced via DB_SYNC=${syncMode} (migrations skipped).`);
+      } else {
+        const { runMigrations } = require('./config/migrator');
+        await runMigrations();
+      }
 
       // Auto-create admin accounts from ADMIN_ACCOUNTS env var
       if (process.env.ADMIN_ACCOUNTS) {
