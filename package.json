@@ -6,6 +6,10 @@
     "dev": "nodemon server.js",
     "db:seed": "node seeders/seed.js",
     "db:create-admin": "node seeders/create-super-admin.js",
+    "db:migrate": "node scripts/migrate.js up",
+    "db:migrate:undo": "node scripts/migrate.js down",
+    "db:migrate:pending": "node scripts/migrate.js pending",
+    "db:migrate:status": "node scripts/migrate.js status",
     "test": "jest --runInBand",
     "test:auth": "jest tests/auth.test.js --runInBand",
     "test:resources": "jest tests/resources.test.js --runInBand",
@@ -34,7 +38,8 @@
     "sequelize": "^6.37.8",
     "socket.io": "^4.8.3",
     "swagger-jsdoc": "^6.3.0",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "umzug": "^3.8.3"
   },
   "devDependencies": {
     "@jest/globals": "^30.4.1",
