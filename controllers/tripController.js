@@ -47,10 +47,10 @@ exports.getAll = async (req, res) => {
 };
 exports.create = async (req, res) => {
   try {
-    const { routeId, type, scheduledDate } = req.body;
+    const { routeId, type, scheduledDate, scheduledTime } = req.body;
     const route = await Route.findOne({ where: { id: routeId, schoolId: req.user.schoolId } });
     if (!route) return res.status(404).json({ error: 'Route not found.' });
-    const trip = await Trip.create({ routeId, driverId: route.driverId, vehicleId: route.vehicleId, type, scheduledDate, status: 'scheduled' });
+    const trip = await Trip.create({ routeId, driverId: route.driverId, vehicleId: route.vehicleId, type, scheduledDate, scheduledTime: scheduledTime || null, status: 'scheduled' });
     res.status(201).json({ message: 'Trip scheduled.', trip });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

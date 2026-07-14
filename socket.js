@@ -6,6 +6,7 @@ const { sendPushToUser } = require('./services/push');
 // Human-readable titles for the phone tray notification, keyed by socket event.
 const PUSH_TITLES = {
   'trip-started': '🚌 Trip Started',
+  'trip-reminder': '⏰ Trip Starting Soon',
   'driver-approaching': '🚌 Driver Approaching',
   'driver-arrived': '📍 Bus Arrived',
   'student-picked-up': '✅ Picked Up',

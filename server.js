@@ -87,6 +87,10 @@ if (require.main === module) {
       }
 
       server.listen(PORT, () => { console.log(`🚀 Server: http://localhost:${PORT}`); console.log(`📋 API: http://localhost:${PORT}/api`); console.log(`🔌 Socket.IO ready`); });
+
+      // Remind drivers shortly before each scheduled trip's start time.
+      const { startTripReminderScheduler } = require('./services/tripReminders');
+      startTripReminderScheduler();
     } catch (err) { console.error('❌ Start failed:', err); process.exit(1); }
   })();
 }
