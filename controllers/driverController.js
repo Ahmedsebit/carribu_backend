@@ -1,6 +1,27 @@
 const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('../models');
 const { Op } = require('sequelize');
-const { checkMissedTrips } = require('../services/tripReminders');
+
+// Summarize a single student's pickup timeline from a set of trip logs.
+// Returns the key event timestamps plus the wait between the bus arriving
+// and the student actually being picked up (check_in).
+const summarizeStudent = (studentId, logs) => {
+  const sl = logs.filter(l => l.studentId === studentId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const at = act => { const x = sl.find(l => l.action === act); return x ? x.timestamp : null; };
+  const arrivedAt = at('arrived'), pickedAt = at('check_in'), droppedAt = at('check_out'), absent = !!at('absent');
+  let status = 'pending';
+  if (absent) status = 'absent';
+  else if (droppedAt) status = 'dropped_off';
+  else if (pickedAt) status = 'on_bus';
+  else if (arrivedAt) status = 'arrived';
+  const waitSeconds = (arrivedAt && pickedAt) ? Math.max(0, Math.round((new Date(pickedAt) - new Date(arrivedAt)) / 1000)) : null;
+  return { arrivedAt, pickedAt, droppedAt, absent, status, waitSeconds };
+};
+const historySince = req => {
+  const days = Math.min(parseInt(req.query.days, 10) || 30, 90);
+  const since = new Date(); since.setDate(since.getDate() - days);
+  return since.toISOString().split('T')[0];
+};
+
 exports.getMyRoutes = async (req, res) => {
   try {
     const routes = await Route.findAll({ where: { driverId: req.user.id, isActive: true }, include: [
@@ -42,6 +63,26 @@ exports.getMyTrips = async (req, res) => {
       });
       t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
       return t;
+    });
+    res.json({ trips: result, total: result.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+exports.getTripHistory = async (req, res) => {
+  try {
+    const sinceStr = historySince(req);
+    const trips = await Trip.findAll({ where: { driverId: req.user.id, status: 'completed', scheduledDate: { [Op.gte]: sinceStr } }, include: [
+      { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] } }] },
+      { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model'] },
+      { model: TripLog, as: 'logs' },
+    ], order: [['scheduled_date','DESC'],['started_at','DESC']] });
+    const result = trips.map(trip => {
+      const t = trip.toJSON();
+      const students = (t.route?.students || []).sort((a,b) => (a.RouteStudent?.stopOrder||0)-(b.RouteStudent?.stopOrder||0));
+      const logs = t.logs || [];
+      const pickupList = students.map((s,idx) => { const sum = summarizeStudent(s.id, logs); return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, ...sum }; });
+      const stats = { total: pickupList.length, pickedUp: pickupList.filter(p => p.status==='on_bus'||p.status==='dropped_off').length, absent: pickupList.filter(p => p.status==='absent').length };
+      const durationMinutes = (t.startedAt && t.endedAt) ? Math.round((new Date(t.endedAt)-new Date(t.startedAt))/60000) : null;
+      return { id: t.id, scheduledDate: t.scheduledDate, type: t.type, status: t.status, startedAt: t.startedAt, endedAt: t.endedAt, durationMinutes, route: { id: t.route?.id, name: t.route?.name }, vehicle: t.vehicle, pickupList, stats };
     });
     res.json({ trips: result, total: result.length });
   } catch (err) { res.status(500).json({ error: err.message }); }

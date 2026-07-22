@@ -1,5 +1,6 @@
 const crypto = require('crypto');
-const { User, Student, School } = require('../models');
+const { User, Student, School, Trip, Route, Vehicle, TripLog } = require('../models');
+const { Op } = require('sequelize');
 const { normalizePhoneE164 } = require('../utils/phone');
 
 // Random placeholder hash for pending accounts; parents set their own password in the app
@@ -86,3 +87,72 @@ exports.deleteParent = async (req, res) => {
     res.json({ message: 'Parent deactivated' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
+
+// Summarize a single student's pickup timeline from a set of trip logs.
+// Returns the key event timestamps plus the wait between the bus arriving
+// and the student actually being picked up (check_in).
+const summarizeStudent = (studentId, logs) => {
+  const sl = logs.filter(l => l.studentId === studentId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const at = act => { const x = sl.find(l => l.action === act); return x ? x.timestamp : null; };
+  const arrivedAt = at('arrived'), pickedAt = at('check_in'), droppedAt = at('check_out'), absent = !!at('absent');
+  let status = 'pending';
+  if (absent) status = 'absent';
+  else if (droppedAt) status = 'dropped_off';
+  else if (pickedAt) status = 'on_bus';
+  else if (arrivedAt) status = 'arrived';
+  const waitSeconds = (arrivedAt && pickedAt) ? Math.max(0, Math.round((new Date(pickedAt) - new Date(arrivedAt)) / 1000)) : null;
+  return { arrivedAt, pickedAt, droppedAt, absent, status, waitSeconds };
+};
+
+// Self-service: completed trips (default last 30 days) that carried the
+// authenticated parent's children. Only the parent's own children are
+// exposed on each trip for privacy.
+exports.getTripHistory = async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days, 10) || 30, 90);
+    const since = new Date(); since.setDate(since.getDate() - days);
+    const sinceStr = since.toISOString().split('T')[0];
+
+    const children = await Student.findAll({
+      where: { parentId: req.user.id },
+      include: [{ model: Route, as: 'routes', attributes: ['id', 'name'], through: { attributes: [] } }],
+    });
+    if (!children.length) return res.json({ trips: [], total: 0 });
+
+    const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
+    if (!routeIds.length) return res.json({ trips: [], total: 0 });
+
+    const trips = await Trip.findAll({
+      where: { routeId: { [Op.in]: routeIds }, status: 'completed', scheduledDate: { [Op.gte]: sinceStr } },
+      include: [
+        { model: Route, as: 'route', attributes: ['id', 'name'] },
+        { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
+        { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+        { model: TripLog, as: 'logs' },
+      ],
+      order: [['scheduled_date', 'DESC'], ['started_at', 'DESC']],
+    });
+
+    const result = trips.map(trip => {
+      const t = trip.toJSON();
+      const logs = t.logs || [];
+      const myChildren = children.filter(c => (c.routes || []).some(r => r.id === t.routeId));
+      const childRows = myChildren.map(c => {
+        const sum = summarizeStudent(c.id, logs);
+        return { studentId: c.id, studentName: `${c.firstName} ${c.lastName}`, grade: c.grade, ...sum };
+      });
+      const durationMinutes = (t.startedAt && t.endedAt) ? Math.round((new Date(t.endedAt) - new Date(t.startedAt)) / 60000) : null;
+      return {
+        id: t.id, scheduledDate: t.scheduledDate, type: t.type, status: t.status,
+        startedAt: t.startedAt, endedAt: t.endedAt, durationMinutes,
+        route: { id: t.route?.id, name: t.route?.name },
+        vehicle: t.vehicle,
+        driver: t.driver ? { id: t.driver.id, name: `${t.driver.firstName} ${t.driver.lastName}`, phone: t.driver.phone } : null,
+        children: childRows,
+      };
+    });
+
+    res.json({ trips: result, total: result.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
