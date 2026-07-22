@@ -353,7 +353,7 @@ router.get('/monitoring/active-trips', m.activeTrips);
  *         name: status
  *         schema:
  *           type: string
- *           enum: [scheduled, in_progress, completed, cancelled]
+ *           enum: [scheduled, in_progress, completed, cancelled, missed]
  *       - in: query
  *         name: limit
  *         schema:

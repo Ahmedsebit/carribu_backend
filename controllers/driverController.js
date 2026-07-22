@@ -1,5 +1,6 @@
 const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('../models');
 const { Op } = require('sequelize');
+const { checkMissedTrips } = require('../services/tripReminders');
 exports.getMyRoutes = async (req, res) => {
   try {
     const routes = await Route.findAll({ where: { driverId: req.user.id, isActive: true }, include: [
@@ -12,6 +13,9 @@ exports.getMyRoutes = async (req, res) => {
 };
 exports.getMyTrips = async (req, res) => {
   try {
+    // Retire any of this driver's scheduled trips whose start window has
+    // lapsed so the list reflects only currently actionable work.
+    await checkMissedTrips(Date.now(), { driverId: req.user.id });
     // When a specific date is requested, match it exactly. Otherwise show all
     // current/upcoming work: scheduled trips from today onward plus any active trip,
     // so future-dated scheduled trips don't silently disappear.

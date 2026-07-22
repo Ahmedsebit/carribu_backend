@@ -1,5 +1,6 @@
 const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
 const { notifyUser, notifyTrip } = require('../socket');
+const { checkMissedTrips, isStartWindowLapsed } = require('../services/tripReminders');
 
 // Helper: calculate ETA based on stops away (avg 3 min per stop)
 function estimateETA(stopsAway) {
@@ -9,6 +10,9 @@ function estimateETA(stopsAway) {
 
 exports.getAll = async (req, res) => {
   try {
+    // Refresh missed-trip state before listing so the admin dashboard shows
+    // trips that lapsed without being started.
+    await checkMissedTrips(Date.now());
     const where = {};
     if (req.query.status) where.status = req.query.status;
     if (req.query.date) where.scheduledDate = req.query.date;
@@ -63,7 +67,13 @@ exports.startTrip = async (req, res) => {
       }, { model: User, as: 'driver', attributes: ['id','firstName','lastName'] }]
     });
     if (!trip) return res.status(404).json({ error: 'Trip not found.' });
+    if (trip.status === 'missed') return res.status(400).json({ error: 'This trip was missed — it was not started within the allowed time window.' });
     if (trip.status !== 'scheduled') return res.status(400).json({ error: 'Trip already started or completed.' });
+    // Guard the race where the start window lapsed since the last sweep.
+    if (isStartWindowLapsed(trip)) {
+      await trip.update({ status: 'missed' });
+      return res.status(400).json({ error: 'This trip was missed — it was not started within the allowed time window.' });
+    }
     await trip.update({ status: 'in_progress', startedAt: new Date() });
 
     // Notify all parents on this route that the trip has started
