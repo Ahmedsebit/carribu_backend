@@ -8,6 +8,9 @@ const LEAD_MINUTES = parseInt(process.env.TRIP_REMINDER_LEAD_MINUTES || '15', 10
 // time. Since the DB stores no timezone, interpret them at this UTC offset
 // (hours). Defaults to +3 (East Africa Time). Override with SCHOOL_UTC_OFFSET_HOURS.
 const OFFSET_HOURS = parseFloat(process.env.SCHOOL_UTC_OFFSET_HOURS || '3');
+// How long after the scheduled start a driver may still start the trip before
+// it is automatically marked 'missed'. Defaults to 30 minutes.
+const START_GRACE_MINUTES = parseInt(process.env.TRIP_START_GRACE_MINUTES || '30', 10);
 const POLL_MS = 60 * 1000;
 
 // Absolute UTC millisecond instant for a trip's scheduled start, or null if the
@@ -57,21 +60,64 @@ async function checkReminders(now = Date.now()) {
   return sent;
 }
 
+// True when a trip has an explicit start time whose window (start + grace) has
+// already lapsed at `now`. Trips without a scheduledTime can't be timed out.
+function isStartWindowLapsed(trip, now = Date.now()) {
+  const startMs = tripStartMs(trip);
+  if (startMs == null) return false;
+  return now > startMs + START_GRACE_MINUTES * 60 * 1000;
+}
+
+// Mark scheduled trips as 'missed' once their start window has lapsed without
+// the driver starting them. Accepts an optional extra where filter (e.g. scope
+// to a single driver) so callers can refresh just the trips they care about.
+// The assigned driver is notified once per trip.
+async function checkMissedTrips(now = Date.now(), extraWhere = {}) {
+  const trips = await Trip.findAll({
+    where: {
+      status: 'scheduled',
+      scheduledTime: { [Op.ne]: null },
+      ...extraWhere,
+    },
+    include: [{ model: Route, as: 'route', attributes: ['name'] }],
+  });
+
+  const missed = [];
+  for (const trip of trips) {
+    if (!isStartWindowLapsed(trip, now)) continue;
+    await trip.update({ status: 'missed' });
+    if (trip.driverId) {
+      const routeName = (trip.route && trip.route.name) || 'your route';
+      const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
+      notifyUser(trip.driverId, 'trip-missed', {
+        message: `Your ${kind} on ${routeName} was not started in time and has been marked as missed.`,
+        tripId: trip.id,
+        routeName,
+        scheduledTime: trip.scheduledTime,
+      });
+    }
+    missed.push(trip.id);
+  }
+  return missed;
+}
+
 let timer = null;
 
 function startTripReminderScheduler() {
   if (timer) return;
   timer = setInterval(() => {
     checkReminders().catch((e) => console.warn('Trip reminder check failed:', e.message));
+    checkMissedTrips().catch((e) => console.warn('Missed trip check failed:', e.message));
   }, POLL_MS);
   if (timer.unref) timer.unref();
   // Kick off shortly after boot so reminders aren't delayed by a full interval.
   setTimeout(() => checkReminders().catch(() => {}), 5000);
-  console.log(`⏰ Trip reminder scheduler started (lead ${LEAD_MINUTES}m, offset +${OFFSET_HOURS}h).`);
+  setTimeout(() => checkMissedTrips().catch(() => {}), 5000);
+  console.log(`⏰ Trip reminder scheduler started (lead ${LEAD_MINUTES}m, grace ${START_GRACE_MINUTES}m, offset +${OFFSET_HOURS}h).`);
 }
 
 function stopTripReminderScheduler() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-module.exports = { startTripReminderScheduler, stopTripReminderScheduler, checkReminders, tripStartMs };
+module.exports = { startTripReminderScheduler, stopTripReminderScheduler, checkReminders, checkMissedTrips, isStartWindowLapsed, tripStartMs };

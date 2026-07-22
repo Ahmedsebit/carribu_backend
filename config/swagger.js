@@ -120,7 +120,7 @@ const options = {
             routeId: { type: 'integer' },
             driverId: { type: 'integer' },
             vehicleId: { type: 'integer' },
-            status: { type: 'string', enum: ['scheduled', 'in_progress', 'completed', 'cancelled'] },
+            status: { type: 'string', enum: ['scheduled', 'in_progress', 'completed', 'cancelled', 'missed'] },
             type: { type: 'string', enum: ['morning_pickup', 'afternoon_dropoff'] },
             scheduledDate: { type: 'string', format: 'date' },
             startedAt: { type: 'string', format: 'date-time', nullable: true },
