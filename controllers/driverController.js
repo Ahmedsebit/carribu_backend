@@ -37,14 +37,20 @@ exports.getMyTrips = async (req, res) => {
     // Retire any of this driver's scheduled trips whose start window has
     // lapsed so the list reflects only currently actionable work.
     await checkMissedTrips(Date.now(), { driverId: req.user.id });
+    // A trip is "mine" if either its snapshot driverId matches me, or the
+    // trip's route is currently assigned to me. The route match keeps trips
+    // visible even when the snapshot is stale (e.g. the driver was assigned
+    // to the route after the trip was scheduled).
+    const mine = { [Op.or]: [{ driverId: req.user.id }, { '$route.driver_id$': req.user.id }] };
     // When a specific date is requested, match it exactly. Otherwise show all
     // current/upcoming work: scheduled trips from today onward plus any active trip,
     // so future-dated scheduled trips don't silently disappear.
     const today = new Date().toISOString().split('T')[0];
-    const where = req.query.date
-      ? { driverId: req.user.id, scheduledDate: req.query.date }
-      : { driverId: req.user.id, [Op.or]: [{ scheduledDate: { [Op.gte]: today } }, { status: 'in_progress' }] };
-    const trips = await Trip.findAll({ where, include: [
+    const dateWhere = req.query.date
+      ? { scheduledDate: req.query.date }
+      : { [Op.or]: [{ scheduledDate: { [Op.gte]: today } }, { status: 'in_progress' }] };
+    const where = { [Op.and]: [mine, dateWhere] };
+    const trips = await Trip.findAll({ where, subQuery: false, include: [
       { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
@@ -89,7 +95,7 @@ exports.getTripHistory = async (req, res) => {
 };
 exports.getActiveTrip = async (req, res) => {
   try {
-    const trip = await Trip.findOne({ where: { driverId: req.user.id, status: 'in_progress' }, include: [
+    const trip = await Trip.findOne({ where: { [Op.or]: [{ driverId: req.user.id }, { '$route.driver_id$': req.user.id }], status: 'in_progress' }, subQuery: false, include: [
       { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
