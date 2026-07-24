@@ -1,4 +1,4 @@
-const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint } = require('../models');
+const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip } = require('../models');
 const { Op } = require('sequelize');
 exports.getAll = async (req, res) => {
   try {
@@ -63,7 +63,20 @@ exports.update = async (req, res) => {
     if (!route) return res.status(404).json({ error: 'Route not found.' });
 
     const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
+    const prevDriverId = route.driverId;
+    const prevVehicleId = route.vehicleId;
     await route.update(routeData);
+
+    // Propagate a driver/vehicle change to this route's still-actionable trips
+    // so their snapshot stays in sync (the driver app also matches on the
+    // route's current driver, but keeping the snapshot correct keeps admin
+    // listings and parent notifications accurate).
+    if (route.driverId !== prevDriverId || route.vehicleId !== prevVehicleId) {
+      await Trip.update(
+        { driverId: route.driverId, vehicleId: route.vehicleId },
+        { where: { routeId: route.id, status: ['scheduled', 'in_progress'] } }
+      );
+    }
 
     if (studentIds) {
       await RouteStudent.destroy({ where: { routeId: route.id } });
