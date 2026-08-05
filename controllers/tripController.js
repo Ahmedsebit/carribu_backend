@@ -1,6 +1,6 @@
 const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
 const { notifyUser, notifyTrip } = require('../socket');
-const { checkMissedTrips, isStartWindowLapsed } = require('../services/tripReminders');
+const { checkDelayedTrips, checkMissedTrips, isStartWindowLapsed } = require('../services/tripReminders');
 
 // Helper: calculate ETA based on stops away (avg 3 min per stop)
 function estimateETA(stopsAway) {
@@ -10,8 +10,10 @@ function estimateETA(stopsAway) {
 
 exports.getAll = async (req, res) => {
   try {
-    // Refresh missed-trip state before listing so the admin dashboard shows
-    // trips that lapsed without being started.
+    // Refresh delayed/missed-trip state before listing so the admin dashboard
+    // shows trips that passed their start time (delayed) or lapsed the grace
+    // window without being started (missed / "not started").
+    await checkDelayedTrips(Date.now());
     await checkMissedTrips(Date.now());
     const where = {};
     if (req.query.status) where.status = req.query.status;
@@ -68,7 +70,9 @@ exports.startTrip = async (req, res) => {
     });
     if (!trip) return res.status(404).json({ error: 'Trip not found.' });
     if (trip.status === 'missed') return res.status(400).json({ error: 'This trip was missed — it was not started within the allowed time window.' });
-    if (trip.status !== 'scheduled') return res.status(400).json({ error: 'Trip already started or completed.' });
+    // A driver acknowledges (and thereby starts) a trip that is either still
+    // scheduled or already flagged 'delayed' for running past its start time.
+    if (!['scheduled', 'delayed'].includes(trip.status)) return res.status(400).json({ error: 'Trip already started or completed.' });
     // Guard the race where the start window lapsed since the last sweep.
     if (isStartWindowLapsed(trip)) {
       await trip.update({ status: 'missed' });

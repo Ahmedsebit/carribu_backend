@@ -5,7 +5,7 @@ const Trip = sequelize.define('Trip', {
   routeId: { type: DataTypes.INTEGER, allowNull: false, field: 'route_id' },
   driverId: { type: DataTypes.INTEGER, field: 'driver_id' },
   vehicleId: { type: DataTypes.INTEGER, field: 'vehicle_id' },
-  status: { type: DataTypes.ENUM('scheduled','in_progress','completed','cancelled','missed'), defaultValue: 'scheduled' },
+  status: { type: DataTypes.ENUM('scheduled','delayed','in_progress','completed','cancelled','missed'), defaultValue: 'scheduled' },
   type: { type: DataTypes.ENUM('morning_pickup','afternoon_dropoff'), allowNull: false },
   scheduledDate: { type: DataTypes.DATEONLY, allowNull: false, field: 'scheduled_date' },
   scheduledTime: { type: DataTypes.TIME, allowNull: true, field: 'scheduled_time' },

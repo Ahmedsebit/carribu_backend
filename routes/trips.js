@@ -85,6 +85,28 @@ router.put('/:id/start', authorize('school_admin','coordinator','driver'), c.sta
 
 /**
  * @swagger
+ * /api/trips/{id}/acknowledge:
+ *   put:
+ *     summary: Driver acknowledges a trip, which officially starts it (sets status to in_progress)
+ *     tags: [Trips]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Trip acknowledged and started
+ *       400:
+ *         description: Trip was missed or already started/completed
+ *       404:
+ *         description: Trip not found
+ */
+router.put('/:id/acknowledge', authorize('school_admin','coordinator','driver'), c.startTrip);
+
+/**
+ * @swagger
  * /api/trips/{id}/end:
  *   put:
  *     summary: End a trip (sets status to completed)
