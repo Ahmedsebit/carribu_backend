@@ -7,6 +7,8 @@ const { sendPushToUser } = require('./services/push');
 const PUSH_TITLES = {
   'trip-started': '🚌 Trip Started',
   'trip-reminder': '⏰ Trip Starting Soon',
+  'trip-delayed': '⏱️ Trip Delayed',
+  'trip-missed': '⚠️ Trip Not Started',
   'driver-approaching': '🚌 Driver Approaching',
   'driver-arrived': '📍 Bus Arrived',
   'student-picked-up': '✅ Picked Up',

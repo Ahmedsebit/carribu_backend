@@ -1,5 +1,6 @@
 const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('../models');
 const { Op } = require('sequelize');
+const { checkDelayedTrips, checkMissedTrips } = require('../services/tripReminders');
 
 // Summarize a single student's pickup timeline from a set of trip logs.
 // Returns the key event timestamps plus the wait between the bus arriving
@@ -34,8 +35,10 @@ exports.getMyRoutes = async (req, res) => {
 };
 exports.getMyTrips = async (req, res) => {
   try {
-    // Retire any of this driver's scheduled trips whose start window has
-    // lapsed so the list reflects only currently actionable work.
+    // Refresh this driver's trip state: flag trips past their start time as
+    // 'delayed', then retire any whose start window has fully lapsed as
+    // 'missed', so the list reflects only currently actionable work.
+    await checkDelayedTrips(Date.now(), { driverId: req.user.id });
     await checkMissedTrips(Date.now(), { driverId: req.user.id });
     // A trip is "mine" if either its snapshot driverId matches me, or the
     // trip's route is currently assigned to me. The route match keeps trips

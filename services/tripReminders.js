@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const { Trip, Route } = require('../models');
-const { notifyUser } = require('../socket');
+const { notifyUser, notifyTrip } = require('../socket');
 
 // How many minutes before the scheduled start the driver is reminded.
 const LEAD_MINUTES = parseInt(process.env.TRIP_REMINDER_LEAD_MINUTES || '15', 10);
@@ -68,14 +68,56 @@ function isStartWindowLapsed(trip, now = Date.now()) {
   return now > startMs + START_GRACE_MINUTES * 60 * 1000;
 }
 
-// Mark scheduled trips as 'missed' once their start window has lapsed without
-// the driver starting them. Accepts an optional extra where filter (e.g. scope
-// to a single driver) so callers can refresh just the trips they care about.
-// The assigned driver is notified once per trip.
-async function checkMissedTrips(now = Date.now(), extraWhere = {}) {
+// Mark scheduled trips as 'delayed' once their scheduled start time has passed
+// without the driver acknowledging (starting) them, while they are still within
+// the start grace window (i.e. not yet 'missed'). This surfaces "running late"
+// trips to the admin dashboard and prompts the driver to acknowledge. The
+// assigned driver is notified once per trip (the status change makes it idempotent).
+// Accepts an optional extra where filter (e.g. scope to a single driver).
+async function checkDelayedTrips(now = Date.now(), extraWhere = {}) {
   const trips = await Trip.findAll({
     where: {
       status: 'scheduled',
+      scheduledTime: { [Op.ne]: null },
+      ...extraWhere,
+    },
+    include: [{ model: Route, as: 'route', attributes: ['name'] }],
+  });
+
+  const delayed = [];
+  for (const trip of trips) {
+    const startMs = tripStartMs(trip);
+    if (startMs == null) continue;
+    // Past the scheduled start but the start window has not lapsed yet.
+    if (now > startMs && !isStartWindowLapsed(trip, now)) {
+      await trip.update({ status: 'delayed' });
+      if (trip.driverId) {
+        const routeName = (trip.route && trip.route.name) || 'your route';
+        const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
+        const lateMinutes = Math.max(0, Math.round((now - startMs) / 60000));
+        notifyUser(trip.driverId, 'trip-delayed', {
+          message: `Your ${kind} on ${routeName} is ${lateMinutes} min past its start time. Acknowledge and start it as soon as possible.`,
+          tripId: trip.id,
+          routeName,
+          scheduledTime: trip.scheduledTime,
+          lateMinutes,
+        });
+      }
+      notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'delayed' });
+      delayed.push(trip.id);
+    }
+  }
+  return delayed;
+}
+
+// Mark scheduled/delayed trips as 'missed' once their start window has lapsed
+// without the driver starting them. Accepts an optional extra where filter (e.g.
+// scope to a single driver) so callers can refresh just the trips they care
+// about. The assigned driver is notified once per trip.
+async function checkMissedTrips(now = Date.now(), extraWhere = {}) {
+  const trips = await Trip.findAll({
+    where: {
+      status: { [Op.in]: ['scheduled', 'delayed'] },
       scheduledTime: { [Op.ne]: null },
       ...extraWhere,
     },
@@ -107,11 +149,13 @@ function startTripReminderScheduler() {
   if (timer) return;
   timer = setInterval(() => {
     checkReminders().catch((e) => console.warn('Trip reminder check failed:', e.message));
+    checkDelayedTrips().catch((e) => console.warn('Delayed trip check failed:', e.message));
     checkMissedTrips().catch((e) => console.warn('Missed trip check failed:', e.message));
   }, POLL_MS);
   if (timer.unref) timer.unref();
   // Kick off shortly after boot so reminders aren't delayed by a full interval.
   setTimeout(() => checkReminders().catch(() => {}), 5000);
+  setTimeout(() => checkDelayedTrips().catch(() => {}), 5000);
   setTimeout(() => checkMissedTrips().catch(() => {}), 5000);
   console.log(`⏰ Trip reminder scheduler started (lead ${LEAD_MINUTES}m, grace ${START_GRACE_MINUTES}m, offset +${OFFSET_HOURS}h).`);
 }
@@ -120,4 +164,4 @@ function stopTripReminderScheduler() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-module.exports = { startTripReminderScheduler, stopTripReminderScheduler, checkReminders, checkMissedTrips, isStartWindowLapsed, tripStartMs };
+module.exports = { startTripReminderScheduler, stopTripReminderScheduler, checkReminders, checkDelayedTrips, checkMissedTrips, isStartWindowLapsed, tripStartMs };
