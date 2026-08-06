@@ -199,6 +199,17 @@ describe('E2E: Complete Trip Workflow', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.log.action).toBe('check_in');
+
+    const active = await request(app)
+      .get('/api/driver/active-trip')
+      .set('Authorization', `Bearer ${driverToken}`);
+
+    expect(active.status).toBe(200);
+    expect(active.body.activeTrip.pickupList).toHaveLength(2);
+    expect(active.body.activeTrip.pickupList).toEqual(expect.arrayContaining([
+      expect.objectContaining({ studentId: student1Id, status: 'on_bus' }),
+      expect.objectContaining({ studentId: student2Id, status: 'pending' }),
+    ]));
   });
 
   test('Step 10: Driver arrives at second student stop', async () => {

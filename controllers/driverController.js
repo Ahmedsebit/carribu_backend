@@ -98,7 +98,18 @@ exports.getTripHistory = async (req, res) => {
 };
 exports.getActiveTrip = async (req, res) => {
   try {
-    const trip = await Trip.findOne({ where: { [Op.or]: [{ driverId: req.user.id }, { '$route.driver_id$': req.user.id }], status: 'in_progress' }, subQuery: false, include: [
+    const assignedRoutes = await Route.findAll({
+      where: { driverId: req.user.id },
+      attributes: ['id'],
+    });
+    const assignedRouteIds = assignedRoutes.map(route => route.id);
+    const trip = await Trip.findOne({ where: {
+      [Op.or]: [
+        { driverId: req.user.id },
+        { routeId: { [Op.in]: assignedRouteIds } },
+      ],
+      status: 'in_progress',
+    }, include: [
       { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
