@@ -64,8 +64,11 @@ router.get('/:id', c.getById);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [firstName, lastName]
+ *             required: [admissionNumber, firstName, lastName]
  *             properties:
+ *               admissionNumber:
+ *                 type: string
+ *                 example: ADM-2026-001
  *               firstName:
  *                 type: string
  *                 example: Child

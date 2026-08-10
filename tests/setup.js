@@ -85,6 +85,7 @@ async function setupTestDB() {
   const student1 = await Student.create({
     schoolId: school.id,
     parentId: parent.id,
+    admissionNumber: 'TEST-001',
     firstName: 'Child',
     lastName: 'One',
     grade: 'Grade 3',
@@ -93,6 +94,7 @@ async function setupTestDB() {
   const student2 = await Student.create({
     schoolId: school.id,
     parentId: parent2.id,
+    admissionNumber: 'TEST-002',
     firstName: 'Child',
     lastName: 'Two',
     grade: 'Grade 3',

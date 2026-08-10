@@ -8,6 +8,7 @@ const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
 
 let adminToken, driverToken, parentToken;
 let tripId;
+let conflictingTripId;
 
 beforeAll(async () => {
   await setupTestDB();
@@ -77,6 +78,28 @@ describe('Trip Lifecycle', () => {
     expect(res.status).toBe(200);
     expect(res.body.trip.status).toBe('in_progress');
     expect(res.body.trip.startedAt).toBeDefined();
+  });
+
+  test('PUT /api/trips/:id/start - rejects students already assigned to an active trip', async () => {
+    const { route } = getTestData();
+    const today = new Date().toISOString().split('T')[0];
+    const created = await request(app)
+      .post('/api/trips')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ routeId: route.id, type: 'morning_pickup', scheduledDate: today });
+
+    expect(created.status).toBe(201);
+    conflictingTripId = created.body.trip.id;
+
+    const res = await request(app)
+      .put(`/api/trips/${conflictingTripId}/start`)
+      .set('Authorization', `Bearer ${driverToken}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already assigned to an active trip/i);
+    expect(res.body.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ activeTripId: tripId }),
+    ]));
   });
 
   test('PUT /api/trips/:id/start - cannot start already started trip', async () => {

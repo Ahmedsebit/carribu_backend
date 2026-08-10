@@ -58,6 +58,16 @@ describe('Vehicles API', () => {
     expect(res.body.vehicle.plateNumber).toBe('KDA 888X');
   });
 
+  test('POST /api/vehicles - rejects duplicate plate number', async () => {
+    const res = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ plateNumber: 'kda 999t', make: 'Duplicate', model: 'Bus', capacity: 20 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/plate number/i);
+  });
+
   test('POST /api/vehicles - driver cannot create vehicle', async () => {
     const res = await request(app)
       .post('/api/vehicles')
@@ -65,6 +75,38 @@ describe('Vehicles API', () => {
       .send({ plateNumber: 'KDA 777Z', make: 'Toyota', model: 'Coaster', year: 2022, capacity: 29 });
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe('Driver and parent identity uniqueness', () => {
+  test('POST /api/drivers - rejects an existing phone number in local format', async () => {
+    const res = await request(app)
+      .post('/api/drivers')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: 'other-driver@test.com',
+        firstName: 'Other',
+        lastName: 'Driver',
+        phone: '0700000002',
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/email or phone/i);
+  });
+
+  test('POST /api/parents - rejects an existing phone number in local format', async () => {
+    const res = await request(app)
+      .post('/api/parents')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: 'other-parent@test.com',
+        firstName: 'Other',
+        lastName: 'Parent',
+        phone: '0700000003',
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/email or phone/i);
   });
 });
 
@@ -86,6 +128,7 @@ describe('Students API', () => {
       .post('/api/students')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
+        admissionNumber: 'TEST-003',
         firstName: 'New',
         lastName: 'Student',
         grade: 'Grade 5',
@@ -95,6 +138,22 @@ describe('Students API', () => {
     expect(res.status).toBe(201);
     expect(res.body.student.firstName).toBe('New');
     expect(res.body.student.grade).toBe('Grade 5');
+  });
+
+  test('POST /api/students - rejects duplicate admission number', async () => {
+    const { parent } = getTestData();
+    const res = await request(app)
+      .post('/api/students')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        admissionNumber: 'test-001',
+        firstName: 'Duplicate',
+        lastName: 'Student',
+        parentId: parent.id,
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/admission number/i);
   });
 
   test('GET /api/students - parent cannot list all students', async () => {

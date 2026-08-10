@@ -17,15 +17,34 @@ exports.getById = async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.create = async (req, res) => {
-  try { const vehicle = await Vehicle.create({ ...req.body, schoolId: req.user.schoolId }); res.status(201).json({ message: 'Vehicle created.', vehicle }); }
-  catch (err) { if (err.name === 'SequelizeUniqueConstraintError') return res.status(400).json({ error: 'Plate number already exists.' }); res.status(500).json({ error: err.message }); }
+  try {
+    const plateNumber = String(req.body.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (!plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
+    const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: plateNumber } } });
+    if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
+    const vehicle = await Vehicle.create({ ...req.body, plateNumber, schoolId: req.user.schoolId });
+    res.status(201).json({ message: 'Vehicle created.', vehicle });
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
+    res.status(500).json({ error: err.message });
+  }
 };
 exports.update = async (req, res) => {
   try {
     const vehicle = await Vehicle.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
-    await vehicle.update(req.body); res.json({ message: 'Vehicle updated.', vehicle });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    const updates = { ...req.body };
+    if (Object.prototype.hasOwnProperty.call(updates, 'plateNumber')) {
+      updates.plateNumber = String(updates.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
+      if (!updates.plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
+      const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: updates.plateNumber }, id: { [Op.ne]: vehicle.id } } });
+      if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
+    }
+    await vehicle.update(updates); res.json({ message: 'Vehicle updated.', vehicle });
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
+    res.status(500).json({ error: err.message });
+  }
 };
 exports.delete = async (req, res) => {
   try {
