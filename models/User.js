@@ -9,7 +9,7 @@ const User = sequelize.define('User', {
   firstName: { type: DataTypes.STRING(100), allowNull: false, field: 'first_name' },
   lastName: { type: DataTypes.STRING(100), allowNull: false, field: 'last_name' },
   role: { type: DataTypes.ENUM('super_admin','school_admin','coordinator','driver','parent'), allowNull: false, defaultValue: 'parent' },
-  phone: { type: DataTypes.STRING(20) },
+  phone: { type: DataTypes.STRING(20), unique: true },
   pickupAddress: { type: DataTypes.TEXT, field: 'pickup_address' },
   pickupLat: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lat' },
   pickupLng: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lng' },

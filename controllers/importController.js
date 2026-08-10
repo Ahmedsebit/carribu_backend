@@ -7,6 +7,10 @@ const { normalizePhoneE164 } = require('../utils/phone');
 
 // Random placeholder hash for pending accounts; parents set their own password in the app
 const generatePlaceholderPassword = () => crypto.randomBytes(16).toString('hex');
+const importAdmissionNumber = (schoolId, parentKey, child, index) => {
+  const source = `${schoolId}|${parentKey}|${child.name}|${child.grade}|${index}`.toLowerCase();
+  return `IMP-${crypto.createHash('sha256').update(source).digest('hex').slice(0, 12).toUpperCase()}`;
+};
 
 /**
  * Normalize phone number: strip spaces, ensure leading 0 or +254
@@ -181,11 +185,21 @@ exports.importParentsAndStudents = async (req, res) => {
         }
 
         // Create students
-        for (const child of parentData.children) {
+        for (const [index, child] of parentData.children.entries()) {
           const childNames = splitName(child.name);
+          const admissionNumber = importAdmissionNumber(schoolId, phone || email, child, index);
+          const existingStudent = await Student.findOne({
+            where: { schoolId, admissionNumber },
+            transaction,
+          });
+          if (existingStudent) {
+            results.skipped.push(`Student "${child.name}" already exists (admission: ${admissionNumber})`);
+            continue;
+          }
           await Student.create({
             schoolId,
             parentId: parent.id,
+            admissionNumber,
             firstName: childNames.firstName,
             lastName: childNames.lastName,
             grade: child.grade || null,

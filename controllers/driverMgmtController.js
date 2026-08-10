@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const { User, Vehicle, Route, School } = require('../models');
+const { Op } = require('sequelize');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../utils/email');
+const { normalizePhoneE164 } = require('../utils/phone');
 
 const generatePassword = () => crypto.randomBytes(4).toString('hex');
 
@@ -35,18 +37,23 @@ exports.createDriver = async (req, res) => {
       return res.status(400).json({ error: 'email, firstName, and lastName are required' });
     }
 
-    const existing = await User.findOne({ where: { email } });
-    if (existing) return res.status(409).json({ error: 'A user with this email already exists' });
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
+    if (phone && !normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
+    const identities = [{ email: normalizedEmail }];
+    if (normalizedPhone) identities.push({ phone: normalizedPhone });
+    const existing = await User.findOne({ where: { [Op.or]: identities } });
+    if (existing) return res.status(409).json({ error: 'A user with this email or phone number already exists' });
 
     const tempPassword = generatePassword();
     const driver = await User.create({
       schoolId: req.user.schoolId,
-      email,
+      email: normalizedEmail,
       passwordHash: tempPassword,
       firstName,
       lastName,
       role: 'driver',
-      phone,
+      phone: normalizedPhone,
     });
 
     const school = await School.findByPk(req.user.schoolId);
@@ -58,7 +65,10 @@ exports.createDriver = async (req, res) => {
       emailSent: emailResult.sent || false,
       previewUrl: emailResult.previewUrl || null,
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.updateDriver = async (req, res) => {
@@ -66,9 +76,18 @@ exports.updateDriver = async (req, res) => {
     const driver = await User.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId, role: 'driver' } });
     if (!driver) return res.status(404).json({ error: 'Driver not found' });
     const { firstName, lastName, phone } = req.body;
-    await driver.update({ firstName, lastName, phone });
+    const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
+    if (phone && !normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
+    if (normalizedPhone) {
+      const existing = await User.findOne({ where: { phone: normalizedPhone, id: { [Op.ne]: driver.id } } });
+      if (existing) return res.status(409).json({ error: 'A user with this phone number already exists' });
+    }
+    await driver.update({ firstName, lastName, phone: normalizedPhone });
     res.json({ driver: { ...driver.toJSON(), passwordHash: undefined }, message: 'Driver updated.' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.resetPassword = async (req, res) => {

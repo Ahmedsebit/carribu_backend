@@ -150,6 +150,19 @@ describe('Full end-to-end: school setup -> live trip tracking + notifications', 
     expect(parentToken).toBeTruthy();
   });
 
+  test('Admin cannot reuse a driver or parent phone number', async () => {
+    const duplicateDriver = await auth(request(app).post('/api/drivers'), adminToken)
+      .send({ email: 'driver-two@fullflow.co.ke', firstName: 'Duplicate', lastName: 'Driver', phone: '0700900002' });
+    expect(duplicateDriver.status).toBe(409);
+
+    const duplicateParent = await auth(request(app).post('/api/parents'), adminToken)
+      .send({
+        email: 'parent-two@fullflow.co.ke', firstName: 'Duplicate', lastName: 'Parent',
+        phone: '0700900003', pickupAddress: 'Westlands',
+      });
+    expect(duplicateParent.status).toBe(409);
+  });
+
   test('Admin provisions vehicle, student, route and a scheduled trip', async () => {
     const vehicle = await auth(request(app).post('/api/vehicles'), adminToken)
       .send({ plateNumber: 'KDA FF01', make: 'Toyota', model: 'HiAce', year: 2023, capacity: 18, color: 'White', status: 'active', insuranceExpiry: '2028-01-01' });
@@ -157,7 +170,7 @@ describe('Full end-to-end: school setup -> live trip tracking + notifications', 
     vehicleId = vehicle.body.vehicle.id;
 
     const student = await auth(request(app).post('/api/students'), adminToken)
-      .send({ firstName: 'Kid', lastName: 'One', grade: 'Grade 3', parentId });
+      .send({ admissionNumber: 'FF-001', firstName: 'Kid', lastName: 'One', grade: 'Grade 3', parentId });
     expect(student.status).toBe(201);
     studentId = student.body.student.id;
 

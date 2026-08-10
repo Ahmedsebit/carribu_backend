@@ -40,16 +40,14 @@ exports.createParent = async (req, res) => {
     const normalizedPhone = normalizePhoneE164(phone);
     if (!normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
 
-    const existingEmail = await User.findOne({ where: { email } });
-    if (existingEmail) return res.status(409).json({ error: 'A user with this email already exists' });
-
-    const existingPhone = await User.findOne({ where: { phone: normalizedPhone, role: 'parent', isActive: true } });
-    if (existingPhone) return res.status(409).json({ error: 'A parent with this phone number already exists' });
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await User.findOne({ where: { [Op.or]: [{ email: normalizedEmail }, { phone: normalizedPhone }] } });
+    if (existing) return res.status(409).json({ error: 'A user with this email or phone number already exists' });
 
     // Create the account in a pending state — the parent sets their own password in the app
     const parent = await User.create({
       schoolId: req.user.schoolId,
-      email,
+      email: normalizedEmail,
       passwordHash: generatePlaceholderPassword(),
       firstName,
       lastName,
@@ -65,7 +63,10 @@ exports.createParent = async (req, res) => {
       parent: { ...parent.toJSON(), passwordHash: undefined },
       message: 'Parent added. They can set their password in the app using their phone number.',
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.updateParent = async (req, res) => {
@@ -74,9 +75,16 @@ exports.updateParent = async (req, res) => {
     if (!parent) return res.status(404).json({ error: 'Parent not found' });
 
     const { firstName, lastName, phone, pickupAddress, pickupLat, pickupLng } = req.body;
-    await parent.update({ firstName, lastName, phone, pickupAddress, pickupLat, pickupLng });
+    const normalizedPhone = normalizePhoneE164(phone);
+    if (!normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
+    const existing = await User.findOne({ where: { phone: normalizedPhone, id: { [Op.ne]: parent.id } } });
+    if (existing) return res.status(409).json({ error: 'A user with this phone number already exists' });
+    await parent.update({ firstName, lastName, phone: normalizedPhone, pickupAddress, pickupLat, pickupLng });
     res.json({ parent: { ...parent.toJSON(), passwordHash: undefined } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.deleteParent = async (req, res) => {
@@ -155,4 +163,3 @@ exports.getTripHistory = async (req, res) => {
     res.json({ trips: result, total: result.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
-

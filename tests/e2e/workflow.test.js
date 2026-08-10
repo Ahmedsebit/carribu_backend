@@ -98,12 +98,12 @@ describe('E2E: Complete Trip Workflow', () => {
     const res1 = await request(app)
       .post('/api/students')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ firstName: 'Alice', lastName: 'Kamau', grade: 'Grade 3', parentId: parent1Id });
+      .send({ admissionNumber: 'E2E-001', firstName: 'Alice', lastName: 'Kamau', grade: 'Grade 3', parentId: parent1Id });
 
     const res2 = await request(app)
       .post('/api/students')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ firstName: 'Bob', lastName: 'Njoroge', grade: 'Grade 3', parentId: parent2Id });
+      .send({ admissionNumber: 'E2E-002', firstName: 'Bob', lastName: 'Njoroge', grade: 'Grade 3', parentId: parent2Id });
 
     expect(res1.status).toBe(201);
     expect(res2.status).toBe(201);

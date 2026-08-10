@@ -78,6 +78,8 @@ router.post('/', authorize('school_admin','coordinator','driver'), c.create);
  *     responses:
  *       200:
  *         description: Trip started
+ *       409:
+ *         description: One or more students are already assigned to another active trip
  *       404:
  *         description: Trip not found
  */

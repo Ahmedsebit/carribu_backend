@@ -9,5 +9,12 @@ const Student = sequelize.define('Student', {
   lastName: { type: DataTypes.STRING(100), allowNull: false, field: 'last_name' },
   grade: { type: DataTypes.STRING(20) },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
-}, { tableName: 'students' });
+}, {
+  tableName: 'students',
+  indexes: [{
+    name: 'students_school_admission_unique',
+    unique: true,
+    fields: ['school_id', 'admission_number'],
+  }],
+});
 module.exports = Student;

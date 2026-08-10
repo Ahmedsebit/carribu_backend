@@ -1,4 +1,6 @@
 const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
+const { sequelize } = require('../models');
+const { Op } = require('sequelize');
 const { notifyUser, notifyTrip } = require('../socket');
 const { checkDelayedTrips, checkMissedTrips, isStartWindowLapsed } = require('../services/tripReminders');
 
@@ -78,7 +80,77 @@ exports.startTrip = async (req, res) => {
       await trip.update({ status: 'missed' });
       return res.status(400).json({ error: 'This trip was missed — it was not started within the allowed time window.' });
     }
-    await trip.update({ status: 'in_progress', startedAt: new Date() });
+    const studentIds = (trip.route?.students || []).map(student => student.id);
+    let conflicts = [];
+    let stateChangedWhileWaiting = false;
+
+    await sequelize.transaction(async transaction => {
+      // Serialize starts within a school so two simultaneous requests cannot
+      // both pass the roster check before either status is persisted.
+      await sequelize.query('SELECT pg_advisory_xact_lock(:schoolId)', {
+        replacements: { schoolId: req.user.schoolId },
+        transaction,
+      });
+
+      const currentTrip = await Trip.findByPk(trip.id, {
+        attributes: ['status'],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!currentTrip || !['scheduled', 'delayed'].includes(currentTrip.status)) {
+        stateChangedWhileWaiting = true;
+        return;
+      }
+
+      if (studentIds.length > 0) {
+        const activeTrips = await Trip.findAll({
+          attributes: ['id'],
+          where: { id: { [Op.ne]: trip.id }, status: 'in_progress' },
+          include: [{
+            model: Route,
+            as: 'route',
+            attributes: ['id', 'name'],
+            required: true,
+            where: { schoolId: req.user.schoolId },
+            include: [{
+              model: Student,
+              as: 'students',
+              attributes: ['id', 'admissionNumber', 'firstName', 'lastName'],
+              required: true,
+              where: { id: { [Op.in]: studentIds } },
+              through: { attributes: [] },
+            }],
+          }],
+          transaction,
+        });
+
+        conflicts = activeTrips.flatMap(activeTrip =>
+          activeTrip.route.students.map(student => ({
+            studentId: student.id,
+            admissionNumber: student.admissionNumber,
+            studentName: `${student.firstName} ${student.lastName}`,
+            activeTripId: activeTrip.id,
+            activeRouteName: activeTrip.route.name,
+          }))
+        );
+      }
+
+      if (conflicts.length === 0) {
+        await trip.update({ status: 'in_progress', startedAt: new Date() }, { transaction });
+      }
+    });
+
+    if (stateChangedWhileWaiting) {
+      return res.status(400).json({ error: 'Trip already started or completed.' });
+    }
+
+    if (conflicts.length > 0) {
+      const names = [...new Set(conflicts.map(conflict => conflict.studentName))];
+      return res.status(409).json({
+        error: `Trip cannot start because ${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} already assigned to an active trip.`,
+        conflicts,
+      });
+    }
 
     // Notify all parents on this route that the trip has started
     if (trip.route && trip.route.students) {
