@@ -1,4 +1,4 @@
-const { DataTypes } = require('sequelize');
+const { DataTypes, Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const sequelize = require('../config/database');
 const User = sequelize.define('User', {
@@ -9,7 +9,7 @@ const User = sequelize.define('User', {
   firstName: { type: DataTypes.STRING(100), allowNull: false, field: 'first_name' },
   lastName: { type: DataTypes.STRING(100), allowNull: false, field: 'last_name' },
   role: { type: DataTypes.ENUM('super_admin','school_admin','coordinator','driver','parent'), allowNull: false, defaultValue: 'parent' },
-  phone: { type: DataTypes.STRING(20), unique: true },
+  phone: { type: DataTypes.STRING(20) },
   pickupAddress: { type: DataTypes.TEXT, field: 'pickup_address' },
   pickupLat: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lat' },
   pickupLng: { type: DataTypes.DECIMAL(10,7), field: 'pickup_lng' },
@@ -21,6 +21,12 @@ const User = sequelize.define('User', {
   mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
 }, {
   tableName: 'users',
+  indexes: [{
+    name: 'users_phone_unique',
+    unique: true,
+    fields: ['phone'],
+    where: { phone: { [Op.ne]: '' } },
+  }],
   hooks: {
     beforeCreate: async (user) => { if (user.passwordHash) user.passwordHash = await bcrypt.hash(user.passwordHash, 12); },
     beforeUpdate: async (user) => { if (user.changed('passwordHash')) user.passwordHash = await bcrypt.hash(user.passwordHash, 12); },

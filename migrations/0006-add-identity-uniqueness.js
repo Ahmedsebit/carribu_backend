@@ -1,6 +1,11 @@
 module.exports = {
   async up({ context: queryInterface }) {
     await queryInterface.sequelize.query(`
+      UPDATE users
+      SET phone = NULL
+      WHERE phone IS NOT NULL AND btrim(phone) = '';
+    `);
+    await queryInterface.sequelize.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
       ON users (phone)
       WHERE phone IS NOT NULL AND btrim(phone) <> '';
