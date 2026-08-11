@@ -5,6 +5,7 @@
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
+const { User } = require('../models');
 
 let adminToken, driverToken, parentToken;
 
@@ -79,6 +80,31 @@ describe('Vehicles API', () => {
 });
 
 describe('Driver and parent identity uniqueness', () => {
+  test('users may share a blank optional phone number', async () => {
+    const { school } = getTestData();
+
+    await expect(User.bulkCreate([
+      {
+        schoolId: school.id,
+        email: 'blank-phone-1@test.com',
+        passwordHash: 'password',
+        firstName: 'Blank',
+        lastName: 'One',
+        role: 'coordinator',
+        phone: '',
+      },
+      {
+        schoolId: school.id,
+        email: 'blank-phone-2@test.com',
+        passwordHash: 'password',
+        firstName: 'Blank',
+        lastName: 'Two',
+        role: 'coordinator',
+        phone: '',
+      },
+    ])).resolves.toHaveLength(2);
+  });
+
   test('POST /api/drivers - rejects an existing phone number in local format', async () => {
     const res = await request(app)
       .post('/api/drivers')
