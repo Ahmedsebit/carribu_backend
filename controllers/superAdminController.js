@@ -131,10 +131,13 @@ exports.createSchoolAdmin = async (req, res) => {
     }
     const school = await School.findByPk(schoolId);
     if (!school) return res.status(400).json({ error: 'Invalid school ID.' });
-    if (await User.findOne({ where: { email } })) return res.status(400).json({ error: 'Email already registered.' });
+    const normalizedEmail = email.trim().toLowerCase();
+    if (await User.findOne({ where: { schoolId, email: normalizedEmail } })) {
+      return res.status(400).json({ error: 'Email already registered for this school.' });
+    }
 
     const user = await User.create({
-      schoolId, email, passwordHash: password, firstName, lastName, role: 'school_admin', phone,
+      schoolId, email: normalizedEmail, passwordHash: password, firstName, lastName, role: 'school_admin', phone,
     });
     res.status(201).json({ message: 'School admin created.', user });
   } catch (err) { res.status(500).json({ error: err.message }); }

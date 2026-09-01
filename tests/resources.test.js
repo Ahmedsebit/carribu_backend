@@ -5,7 +5,7 @@
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
-const { User } = require('../models');
+const { User, ParentSchool, Student } = require('../models');
 
 let adminToken, driverToken, parentToken;
 
@@ -80,6 +80,54 @@ describe('Vehicles API', () => {
 });
 
 describe('Driver and parent identity uniqueness', () => {
+  test('DELETE /api/drivers/:id permanently deletes a driver from this school', async () => {
+    const { school } = getTestData();
+    const driver = await User.create({
+      schoolId: school.id,
+      email: 'delete-driver@test.com',
+      passwordHash: 'password',
+      firstName: 'Delete',
+      lastName: 'Driver',
+      role: 'driver',
+      phone: '+254711222334',
+    });
+
+    const res = await request(app)
+      .delete(`/api/drivers/${driver.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/deleted/i);
+    await expect(User.findByPk(driver.id)).resolves.toBeNull();
+  });
+
+  test('POST /api/drivers - allows email and phone used by another school', async () => {
+    const { School } = require('../models');
+    const otherSchool = await School.create({ name: 'Other Academy' });
+    await User.create({
+      schoolId: otherSchool.id,
+      email: 'shared-driver@test.com',
+      passwordHash: 'password',
+      firstName: 'Other',
+      lastName: 'Driver',
+      role: 'driver',
+      phone: '+254711222333',
+    });
+
+    const res = await request(app)
+      .post('/api/drivers')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: 'shared-driver@test.com',
+        firstName: 'Shared',
+        lastName: 'Driver',
+        phone: '+254711222333',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.driver.schoolId).toBe(getTestData().school.id);
+  });
+
   test('users may share a blank optional phone number', async () => {
     const { school } = getTestData();
 
@@ -133,6 +181,43 @@ describe('Driver and parent identity uniqueness', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/email or phone/i);
+  });
+});
+
+describe('Multi-school parent membership', () => {
+  test('CSV import reuses an existing parent and links the new school', async () => {
+    const { School } = require('../models');
+    const otherSchool = await School.create({ name: 'Parent Origin School' });
+    const parent = await User.create({
+      schoolId: otherSchool.id,
+      email: 'multi-school-parent@test.com',
+      passwordHash: 'parent123',
+      firstName: 'Multi',
+      lastName: 'Parent',
+      role: 'parent',
+      phone: '+254722333444',
+      mustSetPassword: false,
+    });
+    const csv = [
+      'Parent Name,Phone Number,Child(ren),Grade/Class',
+      'Multi Parent,0722333444,Second School Child,Grade 4',
+    ].join('\n');
+
+    const res = await request(app)
+      .post('/api/import/parents-students')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', Buffer.from(csv), 'parents.csv');
+
+    expect(res.status).toBe(201);
+    expect(res.body.parentsCreated).toBe(0);
+    expect(res.body.parentsLinked).toBe(1);
+    const memberships = await ParentSchool.findAll({ where: { parentId: parent.id } });
+    expect(memberships).toHaveLength(2);
+    const importedStudent = await Student.findOne({
+      where: { schoolId: getTestData().school.id, firstName: 'Second' },
+    });
+    expect(importedStudent.parentId).toBe(parent.id);
+    await importedStudent.destroy();
   });
 });
 

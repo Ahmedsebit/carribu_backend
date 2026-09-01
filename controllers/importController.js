@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { parse } = require('csv-parse/sync');
-const { User, Student, School, sequelize } = require('../models');
+const { User, ParentSchool, Student, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const { normalizePhoneE164 } = require('../utils/phone');
 
 // Random placeholder hash for pending accounts; parents set their own password in the app
@@ -122,7 +123,7 @@ function splitName(fullName) {
  * Uses phone number as username, generates password, sends via SMS
  */
 exports.importParentsAndStudents = async (req, res) => {
-  const transaction = await sequelize.transaction();
+  let transaction;
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'CSV file is required. Upload with field name "file".' });
@@ -137,11 +138,11 @@ exports.importParentsAndStudents = async (req, res) => {
       return res.status(400).json({ error: 'No valid parent/student data found in CSV.' });
     }
 
-    const school = await School.findByPk(schoolId);
-    const schoolName = school?.name || 'Your School';
+    transaction = await sequelize.transaction();
 
     const results = {
       parentsCreated: 0,
+      parentsLinked: 0,
       studentsCreated: 0,
       skipped: [],
       errors: [],
@@ -155,14 +156,17 @@ exports.importParentsAndStudents = async (req, res) => {
         // Use phone as username; email is generated placeholder for DB constraint
         const email = generateEmail(parentData.name, schoolDomain);
 
-        // Check if parent already exists by phone or email
-        let parent = null;
-        if (phone) {
-          parent = await User.findOne({ where: { phone }, transaction });
+        const identityConditions = [{ email }];
+        if (phone) identityConditions.unshift({ phone });
+        const matchingParents = await User.findAll({
+          where: { role: 'parent', [Op.or]: identityConditions },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (matchingParents.length > 1) {
+          throw new Error('Multiple parent accounts use this phone or email. Merge them before importing.');
         }
-        if (!parent) {
-          parent = await User.findOne({ where: { email }, transaction });
-        }
+        let parent = matchingParents[0] || null;
 
         if (!parent) {
           parent = await User.create({
@@ -180,7 +184,15 @@ exports.importParentsAndStudents = async (req, res) => {
             name: parentData.name,
             phone,
           });
-        } else {
+        }
+
+        const [, membershipCreated] = await ParentSchool.findOrCreate({
+          where: { parentId: parent.id, schoolId },
+          transaction,
+        });
+        if (membershipCreated && parent.schoolId !== schoolId) {
+          results.parentsLinked++;
+        } else if (!membershipCreated) {
           results.skipped.push(`Parent "${parentData.name}" already exists (phone: ${phone})`);
         }
 
@@ -217,11 +229,11 @@ exports.importParentsAndStudents = async (req, res) => {
     fs.unlinkSync(req.file.path);
 
     res.status(201).json({
-      message: `Import complete. ${results.parentsCreated} parents and ${results.studentsCreated} students created. Parents can set their password in the app using their phone number.`,
+      message: `Import complete. ${results.parentsCreated} parents created, ${results.parentsLinked} existing parents linked, and ${results.studentsCreated} students created.`,
       ...results,
     });
   } catch (err) {
-    await transaction.rollback();
+    if (transaction) await transaction.rollback();
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: err.message });
   }

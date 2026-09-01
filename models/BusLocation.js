@@ -4,7 +4,7 @@ const BusLocation = sequelize.define('BusLocation', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   tripId: { type: DataTypes.INTEGER, allowNull: false, field: 'trip_id' },
   vehicleId: { type: DataTypes.INTEGER, allowNull: false, field: 'vehicle_id' },
-  driverId: { type: DataTypes.INTEGER, allowNull: false, field: 'driver_id' },
+  driverId: { type: DataTypes.INTEGER, allowNull: true, field: 'driver_id' },
   lat: { type: DataTypes.DECIMAL(10,7), allowNull: false },
   lng: { type: DataTypes.DECIMAL(10,7), allowNull: false },
   speed: { type: DataTypes.DECIMAL(5,2) },

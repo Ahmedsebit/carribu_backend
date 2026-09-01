@@ -13,6 +13,7 @@ const BusLocation = require('./BusLocation');
 const AppVersion = require('./AppVersion');
 const AuditLog = require('./AuditLog');
 const Subscription = require('./Subscription');
+const ParentSchool = require('./ParentSchool');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -25,10 +26,26 @@ School.hasMany(Message, { foreignKey: 'school_id', as: 'messages' });
 
 User.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 User.hasMany(Student, { foreignKey: 'parent_id', as: 'children' });
-User.hasMany(Route, { foreignKey: 'driver_id', as: 'assignedRoutes' });
-User.hasMany(Trip, { foreignKey: 'driver_id', as: 'trips' });
+User.hasMany(Route, { foreignKey: 'driver_id', as: 'assignedRoutes', onDelete: 'SET NULL' });
+User.hasMany(Trip, { foreignKey: 'driver_id', as: 'trips', onDelete: 'SET NULL' });
 User.hasMany(Message, { foreignKey: 'sender_id', as: 'sentMessages' });
 User.hasMany(Message, { foreignKey: 'receiver_id', as: 'receivedMessages' });
+User.hasMany(ParentSchool, { foreignKey: 'parent_id', as: 'schoolMemberships', onDelete: 'CASCADE' });
+User.belongsToMany(School, {
+  through: ParentSchool,
+  foreignKey: 'parent_id',
+  otherKey: 'school_id',
+  as: 'parentSchools',
+});
+School.hasMany(ParentSchool, { foreignKey: 'school_id', as: 'parentMemberships', onDelete: 'CASCADE' });
+School.belongsToMany(User, {
+  through: ParentSchool,
+  foreignKey: 'school_id',
+  otherKey: 'parent_id',
+  as: 'parentUsers',
+});
+ParentSchool.belongsTo(User, { foreignKey: 'parent_id', as: 'parent' });
+ParentSchool.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 
 Vehicle.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Vehicle.hasMany(Route, { foreignKey: 'vehicle_id', as: 'routes' });
@@ -42,14 +59,14 @@ Student.hasMany(TripLog, { foreignKey: 'student_id', as: 'tripLogs' });
 
 Route.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Route.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
-Route.belongsTo(User, { foreignKey: 'driver_id', as: 'driver' });
+Route.belongsTo(User, { foreignKey: 'driver_id', as: 'driver', onDelete: 'SET NULL' });
 Route.belongsToMany(Student, { through: RouteStudent, foreignKey: 'route_id', otherKey: 'student_id', as: 'students' });
 Route.hasMany(Trip, { foreignKey: 'route_id', as: 'trips' });
 Route.hasMany(RouteWaypoint, { foreignKey: 'route_id', as: 'routeWaypoints' });
 RouteWaypoint.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
 
 Trip.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
-Trip.belongsTo(User, { foreignKey: 'driver_id', as: 'driver' });
+Trip.belongsTo(User, { foreignKey: 'driver_id', as: 'driver', onDelete: 'SET NULL' });
 Trip.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 Trip.hasMany(TripLog, { foreignKey: 'trip_id', as: 'logs' });
 Trip.hasMany(Message, { foreignKey: 'trip_id', as: 'messages' });
@@ -65,7 +82,7 @@ Message.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 
 BusLocation.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 BusLocation.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
-BusLocation.belongsTo(User, { foreignKey: 'driver_id', as: 'driver' });
+BusLocation.belongsTo(User, { foreignKey: 'driver_id', as: 'driver', onDelete: 'SET NULL' });
 
 RouteStudent.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
 RouteStudent.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
@@ -76,4 +93,4 @@ AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
 
-module.exports = { sequelize, School, User, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, AppVersion, AuditLog, Subscription };
