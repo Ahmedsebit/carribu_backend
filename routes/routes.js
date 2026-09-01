@@ -50,6 +50,7 @@ router.get('/', c.getAll);
  *       404:
  *         description: Route not found
  */
+router.get('/:id/trip-history', authorize('school_admin','coordinator'), c.getTripHistory);
 router.get('/:id', c.getById);
 
 /**

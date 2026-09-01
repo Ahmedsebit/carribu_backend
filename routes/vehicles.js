@@ -22,6 +22,7 @@ router.use(authenticate); router.use(schoolTenancy);
  *         description: Vehicle stats
  */
 router.get('/stats/summary', c.getStats);
+router.get('/:id/trip-history', authorize('school_admin', 'coordinator'), c.getTripHistory);
 
 /**
  * @swagger

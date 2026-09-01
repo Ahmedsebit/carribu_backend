@@ -6,9 +6,20 @@ module.exports = {
       WHERE phone IS NOT NULL AND btrim(phone) = '';
     `);
     await queryInterface.sequelize.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
-      ON users (phone)
-      WHERE phone IS NOT NULL AND btrim(phone) <> '';
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT phone
+          FROM users
+          WHERE phone IS NOT NULL AND btrim(phone) <> ''
+          GROUP BY phone
+          HAVING COUNT(*) > 1
+        ) THEN
+          CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique
+          ON users (phone)
+          WHERE phone IS NOT NULL AND btrim(phone) <> '';
+        END IF;
+      END $$;
     `);
     await queryInterface.sequelize.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS students_school_admission_normalized_unique

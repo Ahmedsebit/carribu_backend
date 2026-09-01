@@ -1,4 +1,4 @@
-const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip } = require('../models');
+const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip, TripLog } = require('../models');
 const { Op } = require('sequelize');
 exports.getAll = async (req, res) => {
   try {
@@ -21,6 +21,125 @@ exports.getById = async (req, res) => {
     ]});
     if (!route) return res.status(404).json({ error: 'Route not found.' });
     res.json({ route });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.getTripHistory = async (req, res) => {
+  try {
+    const route = await Route.findOne({
+      where: { id: req.params.id, schoolId: req.user.schoolId },
+      include: [
+        { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model', 'capacity'] },
+        { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+        {
+          model: Student,
+          as: 'students',
+          attributes: ['id', 'firstName', 'lastName', 'grade'],
+          through: { attributes: ['stopOrder'] },
+        },
+      ],
+    });
+    if (!route) return res.status(404).json({ error: 'Route not found.' });
+
+    const days = req.query.days === 'all' ? null : Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+    const where = { routeId: route.id };
+    if (days) {
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      where.scheduledDate = { [Op.gte]: since.toISOString().split('T')[0] };
+    }
+
+    const rows = await Trip.findAll({
+      where,
+      include: [
+        { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
+        { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName'] },
+        { model: TripLog, as: 'logs', attributes: ['id', 'studentId', 'action', 'timestamp'] },
+      ],
+      order: [['scheduled_date', 'DESC'], ['started_at', 'DESC']],
+    });
+
+    const expected = route.students?.length || 0;
+    const trips = rows.map(row => {
+      const trip = row.toJSON();
+      const boarded = new Set(trip.logs.filter(log => log.action === 'check_in').map(log => log.studentId)).size;
+      const droppedOff = new Set(trip.logs.filter(log => log.action === 'check_out').map(log => log.studentId)).size;
+      const absent = new Set(trip.logs.filter(log => log.action === 'absent').map(log => log.studentId)).size;
+      const durationMinutes = trip.startedAt && trip.endedAt
+        ? Math.max(0, Math.round((new Date(trip.endedAt) - new Date(trip.startedAt)) / 60000))
+        : null;
+      return {
+        id: trip.id,
+        scheduledDate: trip.scheduledDate,
+        scheduledTime: trip.scheduledTime,
+        type: trip.type,
+        status: trip.status,
+        startedAt: trip.startedAt,
+        endedAt: trip.endedAt,
+        durationMinutes,
+        vehicle: trip.vehicle,
+        driver: trip.driver,
+        attendance: {
+          expected,
+          boarded,
+          droppedOff,
+          absent,
+          notBoarded: Math.max(0, expected - boarded - absent),
+        },
+      };
+    });
+
+    const completedDurations = trips
+      .filter(trip => trip.status === 'completed' && trip.durationMinutes != null)
+      .map(trip => trip.durationMinutes);
+    const vehicleUsage = new Map();
+    const driverUsage = new Map();
+    trips.forEach(trip => {
+      if (trip.vehicle) vehicleUsage.set(trip.vehicle.id, {
+        id: trip.vehicle.id,
+        plateNumber: trip.vehicle.plateNumber,
+        trips: (vehicleUsage.get(trip.vehicle.id)?.trips || 0) + 1,
+      });
+      if (trip.driver) driverUsage.set(trip.driver.id, {
+        id: trip.driver.id,
+        name: `${trip.driver.firstName} ${trip.driver.lastName}`,
+        trips: (driverUsage.get(trip.driver.id)?.trips || 0) + 1,
+      });
+    });
+    const attendance = trips.reduce((totals, trip) => {
+      totals.expected += trip.attendance.expected;
+      totals.boarded += trip.attendance.boarded;
+      totals.droppedOff += trip.attendance.droppedOff;
+      totals.absent += trip.attendance.absent;
+      totals.notBoarded += trip.attendance.notBoarded;
+      return totals;
+    }, { expected: 0, boarded: 0, droppedOff: 0, absent: 0, notBoarded: 0 });
+    const completed = trips.filter(trip => trip.status === 'completed').length;
+
+    res.json({
+      route,
+      period: days ? `${days} days` : 'all time',
+      stats: {
+        totalTrips: trips.length,
+        completed,
+        inProgress: trips.filter(trip => trip.status === 'in_progress').length,
+        scheduled: trips.filter(trip => trip.status === 'scheduled').length,
+        delayed: trips.filter(trip => trip.status === 'delayed').length,
+        missed: trips.filter(trip => trip.status === 'missed').length,
+        cancelled: trips.filter(trip => trip.status === 'cancelled').length,
+        completionRate: trips.length ? Math.round((completed / trips.length) * 100) : 0,
+        averageDurationMinutes: completedDurations.length
+          ? Math.round(completedDurations.reduce((sum, duration) => sum + duration, 0) / completedDurations.length)
+          : null,
+        totalOperatingMinutes: completedDurations.reduce((sum, duration) => sum + duration, 0),
+        uniqueDrivers: driverUsage.size,
+        uniqueVehicles: vehicleUsage.size,
+        attendance,
+      },
+      driverUsage: [...driverUsage.values()].sort((a, b) => b.trips - a.trips),
+      vehicleUsage: [...vehicleUsage.values()].sort((a, b) => b.trips - a.trips),
+      trips,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.create = async (req, res) => {
