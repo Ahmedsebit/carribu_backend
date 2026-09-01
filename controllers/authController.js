@@ -1,5 +1,11 @@
 const jwt = require('jsonwebtoken');
 const { User, School } = require('../models');
+const parentSchoolsInclude = {
+  model: School,
+  as: 'parentSchools',
+  attributes: ['id', 'name'],
+  through: { attributes: [] },
+};
 const { logLogin } = require('../middleware/auditLog');
 const { normalizePhoneE164 } = require('../utils/phone');
 const generateToken = (user) => jwt.sign(
@@ -9,18 +15,22 @@ const generateToken = (user) => jwt.sign(
 exports.register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, role, phone, schoolId } = req.body;
-    if (await User.findOne({ where: { email } })) return res.status(400).json({ error: 'Email already registered.' });
+    const normalizedEmail = email?.trim().toLowerCase();
+    if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
+    if (await User.findOne({ where: { schoolId: schoolId || null, email: normalizedEmail } })) {
+      return res.status(400).json({ error: 'Email already registered for this school.' });
+    }
     if (schoolId) {
       const school = await School.findByPk(schoolId);
       if (!school) return res.status(400).json({ error: 'Invalid school ID.' });
     }
-    const user = await User.create({ email, passwordHash: password, firstName, lastName, role: role || 'parent', phone, schoolId: schoolId || null });
+    const user = await User.create({ email: normalizedEmail, passwordHash: password, firstName, lastName, role: role || 'parent', phone, schoolId: schoolId || null });
     res.status(201).json({ message: 'User registered.', token: generateToken(user), user });
   } catch (err) { res.status(500).json({ error: 'Registration failed.', details: err.message }); }
 };
 exports.login = async (req, res) => {
   try {
-    const { email, username, password } = req.body;
+    const { email, username, password, schoolId } = req.body;
     const loginIdentifier = email || username;
     if (!loginIdentifier || !password) {
       return res.status(400).json({ error: 'email/username and password are required.' });
@@ -28,16 +38,31 @@ exports.login = async (req, res) => {
     // Allow login by email or phone number (in any format)
     const { Op } = require('sequelize');
     const normalizedPhone = normalizePhoneE164(loginIdentifier);
-    const orConditions = [{ email: loginIdentifier }, { phone: loginIdentifier }];
+    const normalizedEmail = loginIdentifier.trim().toLowerCase();
+    const orConditions = [{ email: normalizedEmail }, { phone: loginIdentifier }];
     if (normalizedPhone) orConditions.push({ phone: normalizedPhone });
-    const user = await User.findOne({
-      where: { [Op.or]: orConditions },
-      include: [{ model: School, as: 'school', attributes: ['id','name'] }],
+    const where = { [Op.or]: orConditions };
+    if (schoolId) where.schoolId = schoolId;
+    const candidates = await User.findAll({
+      where,
+      include: [
+        { model: School, as: 'school', attributes: ['id','name'] },
+        parentSchoolsInclude,
+      ],
     });
-    if (!user || !(await user.validPassword(password))) {
+    const matchingUsers = [];
+    for (const candidate of candidates) {
+      if (await candidate.validPassword(password)) matchingUsers.push(candidate);
+    }
+    if (matchingUsers.length === 0) {
       await logLogin(null, loginIdentifier, req.ip, false);
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
+    if (matchingUsers.length > 1) {
+      await logLogin(null, loginIdentifier, req.ip, false);
+      return res.status(409).json({ error: 'Multiple accounts match these credentials. Please provide your school ID.' });
+    }
+    const user = matchingUsers[0];
     if (!user.isActive) return res.status(403).json({ error: 'Account deactivated.' });
     await logLogin(user.id, loginIdentifier, req.ip, true);
     res.json({ message: 'Login successful.', token: generateToken(user), user });
@@ -45,7 +70,12 @@ exports.login = async (req, res) => {
 };
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findByPk(req.user.id, { include: [{ model: School, as: 'school', attributes: ['id','name'] }] });
+    const user = await User.findByPk(req.user.id, {
+      include: [
+        { model: School, as: 'school', attributes: ['id','name'] },
+        parentSchoolsInclude,
+      ],
+    });
     if (!user) return res.status(404).json({ error: 'User not found.' });
     res.json({ user });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -90,7 +120,13 @@ exports.completeRegistration = async (req, res) => {
     user.mustSetPassword = false;
     await user.save();
 
-    res.json({ message: 'Registration complete.', token: generateToken(user), user });
+    const registeredUser = await User.findByPk(user.id, {
+      include: [
+        { model: School, as: 'school', attributes: ['id','name'] },
+        parentSchoolsInclude,
+      ],
+    });
+    res.json({ message: 'Registration complete.', token: generateToken(user), user: registeredUser });
   } catch (err) { res.status(500).json({ error: 'Could not complete registration.', details: err.message }); }
 };
 exports.changePassword = async (req, res) => {

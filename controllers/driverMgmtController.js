@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { User, Vehicle, Route, School } = require('../models');
+const { User, Vehicle, Route, School, Trip, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../utils/email');
 const { normalizePhoneE164 } = require('../utils/phone');
@@ -42,7 +42,9 @@ exports.createDriver = async (req, res) => {
     if (phone && !normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
     const identities = [{ email: normalizedEmail }];
     if (normalizedPhone) identities.push({ phone: normalizedPhone });
-    const existing = await User.findOne({ where: { [Op.or]: identities } });
+    const existing = await User.findOne({
+      where: { schoolId: req.user.schoolId, [Op.or]: identities },
+    });
     if (existing) return res.status(409).json({ error: 'A user with this email or phone number already exists' });
 
     const tempPassword = generatePassword();
@@ -79,7 +81,13 @@ exports.updateDriver = async (req, res) => {
     const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
     if (phone && !normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
     if (normalizedPhone) {
-      const existing = await User.findOne({ where: { phone: normalizedPhone, id: { [Op.ne]: driver.id } } });
+      const existing = await User.findOne({
+        where: {
+          schoolId: req.user.schoolId,
+          phone: normalizedPhone,
+          id: { [Op.ne]: driver.id },
+        },
+      });
       if (existing) return res.status(409).json({ error: 'A user with this phone number already exists' });
     }
     await driver.update({ firstName, lastName, phone: normalizedPhone });
@@ -112,9 +120,30 @@ exports.resetPassword = async (req, res) => {
 
 exports.deleteDriver = async (req, res) => {
   try {
-    const driver = await User.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId, role: 'driver' } });
-    if (!driver) return res.status(404).json({ error: 'Driver not found' });
-    await driver.update({ isActive: false });
-    res.json({ message: 'Driver deactivated.' });
+    const result = await sequelize.transaction(async (transaction) => {
+      const driver = await User.findOne({
+        where: { id: req.params.id, schoolId: req.user.schoolId, role: 'driver' },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!driver) return { status: 404, error: 'Driver not found' };
+
+      const activeTrip = await Trip.findOne({
+        where: { driverId: driver.id, status: 'in_progress' },
+        transaction,
+      });
+      if (activeTrip) {
+        return {
+          status: 409,
+          error: 'This driver has a trip in progress. End the trip before deleting the driver.',
+        };
+      }
+
+      await driver.destroy({ transaction });
+      return { status: 200 };
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json({ message: 'Driver deleted.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

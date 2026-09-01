@@ -28,6 +28,7 @@ app.use('/api/location', require('../routes/location'));
 app.use('/api/driver', require('../routes/driver'));
 app.use('/api/parents', require('../routes/parents'));
 app.use('/api/drivers', require('../routes/drivers'));
+app.use('/api/import', require('../routes/import'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'OK' }));
 app.use((err, req, res, next) => { console.error(err.message); res.status(500).json({ error: err.message }); });

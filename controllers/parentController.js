@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { User, Student, School, Trip, Route, Vehicle, TripLog } = require('../models');
+const { User, ParentSchool, Student, School, Trip, Route, Vehicle, TripLog, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { normalizePhoneE164 } = require('../utils/phone');
 
@@ -9,9 +9,23 @@ const generatePlaceholderPassword = () => crypto.randomBytes(16).toString('hex')
 exports.listParents = async (req, res) => {
   try {
     const parents = await User.findAll({
-      where: { schoolId: req.user.schoolId, role: 'parent', isActive: true },
+      where: { role: 'parent', isActive: true },
       attributes: { exclude: ['passwordHash'] },
-      include: [{ model: Student, as: 'children', where: { isActive: true }, required: false }],
+      include: [
+        {
+          model: ParentSchool,
+          as: 'schoolMemberships',
+          where: { schoolId: req.user.schoolId },
+          attributes: [],
+          required: true,
+        },
+        {
+          model: Student,
+          as: 'children',
+          where: { schoolId: req.user.schoolId, isActive: true },
+          required: false,
+        },
+      ],
       order: [['firstName', 'ASC']],
     });
     res.json({ parents });
@@ -21,9 +35,24 @@ exports.listParents = async (req, res) => {
 exports.getParent = async (req, res) => {
   try {
     const parent = await User.findOne({
-      where: { id: req.params.id, schoolId: req.user.schoolId, role: 'parent' },
+      where: { id: req.params.id, role: 'parent' },
       attributes: { exclude: ['passwordHash'] },
-      include: [{ model: Student, as: 'children', include: [{ model: require('../models').Route, as: 'routes', through: { attributes: ['stopOrder'] } }] }],
+      include: [
+        {
+          model: ParentSchool,
+          as: 'schoolMemberships',
+          where: { schoolId: req.user.schoolId },
+          attributes: [],
+          required: true,
+        },
+        {
+          model: Student,
+          as: 'children',
+          where: { schoolId: req.user.schoolId },
+          required: false,
+          include: [{ model: require('../models').Route, as: 'routes', through: { attributes: ['stopOrder'] } }],
+        },
+      ],
     });
     if (!parent) return res.status(404).json({ error: 'Parent not found' });
     res.json({ parent });
@@ -41,8 +70,27 @@ exports.createParent = async (req, res) => {
     if (!normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
 
     const normalizedEmail = email.trim().toLowerCase();
-    const existing = await User.findOne({ where: { [Op.or]: [{ email: normalizedEmail }, { phone: normalizedPhone }] } });
-    if (existing) return res.status(409).json({ error: 'A user with this email or phone number already exists' });
+    const matches = await User.findAll({
+      where: { role: 'parent', [Op.or]: [{ email: normalizedEmail }, { phone: normalizedPhone }] },
+    });
+    if (matches.length > 1) {
+      return res.status(409).json({ error: 'The email and phone belong to different parent accounts' });
+    }
+    const existing = matches[0];
+    if (existing) {
+      const [, created] = await ParentSchool.findOrCreate({
+        where: { parentId: existing.id, schoolId: req.user.schoolId },
+      });
+      if (!created) {
+        return res.status(409).json({
+          error: 'A user with this email or phone number already belongs to this school',
+        });
+      }
+      return res.status(200).json({
+        parent: existing,
+        message: 'Existing parent added to this school.',
+      });
+    }
 
     // Create the account in a pending state — the parent sets their own password in the app
     const parent = await User.create({
@@ -58,6 +106,9 @@ exports.createParent = async (req, res) => {
       pickupLng,
       mustSetPassword: true,
     });
+    await ParentSchool.findOrCreate({
+      where: { parentId: parent.id, schoolId: req.user.schoolId },
+    });
 
     res.status(201).json({
       parent: { ...parent.toJSON(), passwordHash: undefined },
@@ -71,13 +122,28 @@ exports.createParent = async (req, res) => {
 
 exports.updateParent = async (req, res) => {
   try {
-    const parent = await User.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId, role: 'parent' } });
+    const parent = await User.findOne({
+      where: { id: req.params.id, role: 'parent' },
+      include: [{
+        model: ParentSchool,
+        as: 'schoolMemberships',
+        where: { schoolId: req.user.schoolId },
+        attributes: [],
+        required: true,
+      }],
+    });
     if (!parent) return res.status(404).json({ error: 'Parent not found' });
 
     const { firstName, lastName, phone, pickupAddress, pickupLat, pickupLng } = req.body;
     const normalizedPhone = normalizePhoneE164(phone);
     if (!normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required' });
-    const existing = await User.findOne({ where: { phone: normalizedPhone, id: { [Op.ne]: parent.id } } });
+    const existing = await User.findOne({
+      where: {
+        role: 'parent',
+        phone: normalizedPhone,
+        id: { [Op.ne]: parent.id },
+      },
+    });
     if (existing) return res.status(409).json({ error: 'A user with this phone number already exists' });
     await parent.update({ firstName, lastName, phone: normalizedPhone, pickupAddress, pickupLat, pickupLng });
     res.json({ parent: { ...parent.toJSON(), passwordHash: undefined } });
@@ -89,10 +155,25 @@ exports.updateParent = async (req, res) => {
 
 exports.deleteParent = async (req, res) => {
   try {
-    const parent = await User.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId, role: 'parent' } });
-    if (!parent) return res.status(404).json({ error: 'Parent not found' });
-    await parent.update({ isActive: false });
-    res.json({ message: 'Parent deactivated' });
+    const deleted = await sequelize.transaction(async (transaction) => {
+      const membership = await ParentSchool.findOne({
+        where: { parentId: req.params.id, schoolId: req.user.schoolId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!membership) return false;
+      await Student.update(
+        { parentId: null },
+        {
+          where: { parentId: req.params.id, schoolId: req.user.schoolId },
+          transaction,
+        },
+      );
+      await membership.destroy({ transaction });
+      return true;
+    });
+    if (!deleted) return res.status(404).json({ error: 'Parent not found' });
+    res.json({ message: 'Parent removed from this school' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -133,7 +214,12 @@ exports.getTripHistory = async (req, res) => {
     const trips = await Trip.findAll({
       where: { routeId: { [Op.in]: routeIds }, status: 'completed', scheduledDate: { [Op.gte]: sinceStr } },
       include: [
-        { model: Route, as: 'route', attributes: ['id', 'name'] },
+        {
+          model: Route,
+          as: 'route',
+          attributes: ['id', 'name', 'schoolId'],
+          include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
+        },
         { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
         { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
         { model: TripLog, as: 'logs' },
@@ -154,6 +240,7 @@ exports.getTripHistory = async (req, res) => {
         id: t.id, scheduledDate: t.scheduledDate, type: t.type, status: t.status,
         startedAt: t.startedAt, endedAt: t.endedAt, durationMinutes,
         route: { id: t.route?.id, name: t.route?.name },
+        school: t.route?.school || null,
         vehicle: t.vehicle,
         driver: t.driver ? { id: t.driver.id, name: `${t.driver.firstName} ${t.driver.lastName}`, phone: t.driver.phone } : null,
         children: childRows,

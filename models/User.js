@@ -4,7 +4,7 @@ const sequelize = require('../config/database');
 const User = sequelize.define('User', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   schoolId: { type: DataTypes.INTEGER, allowNull: true, field: 'school_id', references: { model: 'schools', key: 'id' } },
-  email: { type: DataTypes.STRING(150), allowNull: false, unique: true, validate: { isEmail: true } },
+  email: { type: DataTypes.STRING(150), allowNull: false, validate: { isEmail: true } },
   passwordHash: { type: DataTypes.STRING(255), allowNull: false, field: 'password_hash' },
   firstName: { type: DataTypes.STRING(100), allowNull: false, field: 'first_name' },
   lastName: { type: DataTypes.STRING(100), allowNull: false, field: 'last_name' },
@@ -21,15 +21,44 @@ const User = sequelize.define('User', {
   mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
 }, {
   tableName: 'users',
-  indexes: [{
-    name: 'users_phone_unique',
-    unique: true,
-    fields: ['phone'],
-    where: { phone: { [Op.ne]: '' } },
-  }],
+  indexes: [
+    {
+      name: 'users_school_email_unique',
+      unique: true,
+      fields: ['school_id', 'email'],
+      where: { school_id: { [Op.ne]: null } },
+    },
+    {
+      name: 'users_global_email_unique',
+      unique: true,
+      fields: ['email'],
+      where: { school_id: null },
+    },
+    {
+      name: 'users_school_phone_unique',
+      unique: true,
+      fields: ['school_id', 'phone'],
+      where: { school_id: { [Op.ne]: null }, phone: { [Op.ne]: '' } },
+    },
+    {
+      name: 'users_global_phone_unique',
+      unique: true,
+      fields: ['phone'],
+      where: { school_id: null, phone: { [Op.ne]: '' } },
+    },
+  ],
   hooks: {
     beforeCreate: async (user) => { if (user.passwordHash) user.passwordHash = await bcrypt.hash(user.passwordHash, 12); },
     beforeUpdate: async (user) => { if (user.changed('passwordHash')) user.passwordHash = await bcrypt.hash(user.passwordHash, 12); },
+    afterCreate: async (user, options) => {
+      if (user.role === 'parent' && user.schoolId) {
+        const ParentSchool = require('./ParentSchool');
+        await ParentSchool.findOrCreate({
+          where: { parentId: user.id, schoolId: user.schoolId },
+          transaction: options.transaction,
+        });
+      }
+    },
   },
 });
 User.prototype.validPassword = async function(password) { return bcrypt.compare(password, this.passwordHash); };
