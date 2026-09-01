@@ -13,7 +13,7 @@ exports.getAll = async (req, res) => {
       { model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] },
       { model: School, as: 'school', attributes: ['id','name'] },
       { model: Route, as: 'routes', attributes: ['id','name'], through: { attributes: ['stopOrder'] } },
-    ], order: [['last_name','ASC'],['first_name','ASC']] });
+    ], order: [['firstName','ASC'],['lastName','ASC']] });
     res.json({ students, total: students.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

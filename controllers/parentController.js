@@ -26,7 +26,7 @@ exports.listParents = async (req, res) => {
           required: false,
         },
       ],
-      order: [['firstName', 'ASC']],
+      order: [['firstName', 'ASC'], ['lastName', 'ASC']],
     });
     res.json({ parents });
   } catch (err) { res.status(500).json({ error: err.message }); }

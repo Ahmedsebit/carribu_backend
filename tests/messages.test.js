@@ -5,6 +5,7 @@
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
+const { Message, Trip } = require('../models');
 
 let adminToken, driverToken, parentToken;
 
@@ -107,6 +108,41 @@ describe('Messaging API', () => {
 });
 
 describe('Notifications API', () => {
+  test('POST /api/messages/trip-notification - admin notifies unique parents on selected trips', async () => {
+    const { school, route, driver, vehicle } = getTestData();
+    const trip = await Trip.create({
+      routeId: route.id,
+      driverId: driver.id,
+      vehicleId: vehicle.id,
+      type: 'morning_pickup',
+      status: 'scheduled',
+      scheduledDate: new Date().toISOString().split('T')[0],
+    });
+
+    const res = await request(app)
+      .post('/api/messages/trip-notification')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        tripIds: [trip.id],
+        allTrips: false,
+        content: 'The afternoon pickup time has changed.',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual(expect.objectContaining({
+      recipientCount: 2,
+      tripCount: 1,
+    }));
+    await expect(Message.count({
+      where: {
+        schoolId: school.id,
+        tripId: trip.id,
+        content: 'The afternoon pickup time has changed.',
+        messageType: 'alert',
+      },
+    })).resolves.toBe(2);
+  });
+
   test('GET /api/messages/notifications - parent can view notifications', async () => {
     const res = await request(app)
       .get('/api/messages/notifications')

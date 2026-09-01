@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const c = require('../controllers/messageController');
-const { authenticate, schoolTenancy } = require('../middleware/auth');
+const { authenticate, authorize, schoolTenancy } = require('../middleware/auth');
 
 /**
  * @swagger
@@ -101,6 +101,18 @@ router.get('/thread/:partnerId', c.getThread);
  *         description: List of parents on the route
  */
 router.get('/route-parents/:routeId', c.getRouteParents);
+
+/**
+ * @swagger
+ * /api/messages/trip-notification:
+ *   post:
+ *     summary: Send an alert to parents associated with selected trips
+ *     tags: [Messages]
+ *     responses:
+ *       201:
+ *         description: Notification created for each unique parent
+ */
+router.post('/trip-notification', authorize('school_admin', 'coordinator'), c.sendTripNotification);
 
 /**
  * @swagger
