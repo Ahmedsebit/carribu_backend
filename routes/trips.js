@@ -32,6 +32,8 @@ router.use(authenticate); router.use(schoolTenancy);
  */
 router.get('/', c.getAll);
 
+router.get('/:id/details', authorize('school_admin', 'coordinator'), c.getDetails);
+
 /**
  * @swagger
  * /api/trips:

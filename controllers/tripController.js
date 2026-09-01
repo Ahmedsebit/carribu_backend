@@ -1,4 +1,4 @@
-const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
+const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent, BusLocation } = require('../models');
 const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser, notifyTrip } = require('../socket');
@@ -19,7 +19,13 @@ exports.getAll = async (req, res) => {
     await checkMissedTrips(Date.now());
     const where = {};
     if (req.query.status) where.status = req.query.status;
-    if (req.query.date) where.scheduledDate = req.query.date;
+    if (req.query.date) {
+      where.scheduledDate = req.query.date;
+    } else if (req.query.startDate || req.query.endDate) {
+      where.scheduledDate = {};
+      if (req.query.startDate) where.scheduledDate[Op.gte] = req.query.startDate;
+      if (req.query.endDate) where.scheduledDate[Op.lte] = req.query.endDate;
+    }
     const trips = await Trip.findAll({ where, include: [
       { model: Route, as: 'route', where: { schoolId: req.user.schoolId }, attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] } }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model'] },
@@ -52,6 +58,147 @@ exports.getAll = async (req, res) => {
     });
     res.json({ trips: result, total: result.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.getDetails = async (req, res) => {
+        try {
+          const trip = await Trip.findOne({
+            where: { id: req.params.id },
+            include: [
+              {
+                model: Route,
+                as: 'route',
+                where: { schoolId: req.user.schoolId },
+                attributes: ['id', 'name', 'type', 'departureTime'],
+                include: [{
+                  model: Student,
+                  as: 'students',
+                  attributes: ['id', 'firstName', 'lastName', 'grade'],
+                  through: { attributes: ['stopOrder'] },
+                  include: [{
+                    model: User,
+                    as: 'parent',
+                    attributes: ['id', 'firstName', 'lastName', 'phone', 'pickupAddress', 'pickupLat', 'pickupLng', 'dropoffAddress', 'dropoffLat', 'dropoffLng'],
+                  }],
+                }],
+              },
+              { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model', 'capacity', 'color'] },
+              { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+              {
+                model: TripLog,
+                as: 'logs',
+                include: [{ model: Student, as: 'student', attributes: ['id', 'firstName', 'lastName', 'grade'] }],
+              },
+            ],
+            order: [
+              [{ model: Route, as: 'route' }, { model: Student, as: 'students' }, RouteStudent, 'stop_order', 'ASC'],
+              [{ model: TripLog, as: 'logs' }, 'timestamp', 'ASC'],
+            ],
+          });
+          if (!trip) return res.status(404).json({ error: 'Trip not found.' });
+
+          const value = trip.toJSON();
+          const logs = value.logs || [];
+          const students = (value.route?.students || [])
+            .sort((a, b) => (a.RouteStudent?.stopOrder || 0) - (b.RouteStudent?.stopOrder || 0));
+          const firstLog = (studentId, action) => logs.find(log => log.studentId === studentId && log.action === action);
+          const pickupList = students.map((student, index) => {
+            const arrived = firstLog(student.id, 'arrived');
+            const picked = firstLog(student.id, 'check_in');
+            const dropped = firstLog(student.id, 'check_out');
+            const absent = firstLog(student.id, 'absent');
+            let status = 'pending';
+            if (absent) status = 'absent';
+            else if (dropped) status = 'dropped_off';
+            else if (picked) status = 'on_bus';
+            else if (arrived) status = 'arrived';
+            const waitSeconds = arrived && picked
+              ? Math.max(0, Math.round((new Date(picked.timestamp) - new Date(arrived.timestamp)) / 1000))
+              : null;
+            const parent = student.parent;
+            return {
+              stopNumber: student.RouteStudent?.stopOrder || index + 1,
+              studentId: student.id,
+              studentName: `${student.firstName} ${student.lastName}`,
+              grade: student.grade,
+              parentName: parent ? `${parent.firstName} ${parent.lastName}` : null,
+              parentPhone: parent?.phone || null,
+              address: value.type === 'afternoon_dropoff'
+                ? (parent?.dropoffAddress || parent?.pickupAddress || null)
+                : (parent?.pickupAddress || null),
+              lat: value.type === 'afternoon_dropoff'
+                ? (parent?.dropoffLat || parent?.pickupLat || null)
+                : (parent?.pickupLat || null),
+              lng: value.type === 'afternoon_dropoff'
+                ? (parent?.dropoffLng || parent?.pickupLng || null)
+                : (parent?.pickupLng || null),
+              status,
+              arrivedAt: arrived?.timestamp || null,
+              pickedAt: picked?.timestamp || null,
+              droppedAt: dropped?.timestamp || null,
+              waitSeconds,
+            };
+          });
+
+          const actionableStatuses = value.type === 'afternoon_dropoff'
+            ? ['on_bus', 'arrived']
+            : ['pending', 'arrived'];
+          const nextStop = pickupList.find(student => actionableStatuses.includes(student.status)) || null;
+          const waitValues = pickupList.filter(student => student.waitSeconds != null).map(student => student.waitSeconds);
+          const completedStops = pickupList.filter(student => ['on_bus', 'dropped_off', 'absent'].includes(student.status)).length;
+          const latestLocation = await BusLocation.findOne({
+            where: { tripId: trip.id },
+            attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt'],
+            order: [['recorded_at', 'DESC']],
+          });
+
+          res.json({
+            trip: {
+              id: value.id,
+              scheduledDate: value.scheduledDate,
+              scheduledTime: value.scheduledTime,
+              type: value.type,
+              status: value.status,
+              startedAt: value.startedAt,
+              endedAt: value.endedAt,
+              notes: value.notes,
+              route: value.route ? {
+                id: value.route.id,
+                name: value.route.name,
+                type: value.route.type,
+                departureTime: value.route.departureTime,
+              } : null,
+              vehicle: value.vehicle,
+              driver: value.driver,
+              pickupList,
+              nextStop,
+              logs,
+              location: latestLocation ? {
+                lat: parseFloat(latestLocation.lat),
+                lng: parseFloat(latestLocation.lng),
+                speed: latestLocation.speed == null ? null : parseFloat(latestLocation.speed),
+                heading: latestLocation.heading == null ? null : parseFloat(latestLocation.heading),
+                recordedAt: latestLocation.recordedAt,
+              } : null,
+              stats: {
+                totalStudents: pickupList.length,
+                completedStops,
+                pending: pickupList.filter(student => student.status === 'pending').length,
+                arrived: pickupList.filter(student => student.status === 'arrived').length,
+                onBus: pickupList.filter(student => student.status === 'on_bus').length,
+                droppedOff: pickupList.filter(student => student.status === 'dropped_off').length,
+                absent: pickupList.filter(student => student.status === 'absent').length,
+                completionRate: pickupList.length ? Math.round((completedStops / pickupList.length) * 100) : 0,
+                averageWaitSeconds: waitValues.length
+                  ? Math.round(waitValues.reduce((sum, seconds) => sum + seconds, 0) / waitValues.length)
+                  : null,
+                durationMinutes: value.startedAt && value.endedAt
+                  ? Math.max(0, Math.round((new Date(value.endedAt) - new Date(value.startedAt)) / 60000))
+                  : null,
+              },
+            },
+          });
+        } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.create = async (req, res) => {
   try {

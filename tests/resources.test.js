@@ -40,6 +40,22 @@ describe('Vehicles API', () => {
     expect(res.body.vehicles[0].plateNumber).toBe('KDA 999T');
   });
 
+  test('GET /api/vehicles/:id/trip-history - returns vehicle statistics and trips', async () => {
+    const { vehicle } = getTestData();
+    const res = await request(app)
+      .get(`/api/vehicles/${vehicle.id}/trip-history?days=30`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.vehicle.id).toBe(vehicle.id);
+    expect(res.body.stats).toEqual(expect.objectContaining({
+      totalTrips: expect.any(Number),
+      completionRate: expect.any(Number),
+      attendance: expect.any(Object),
+    }));
+    expect(res.body.trips).toBeInstanceOf(Array);
+  });
+
   test('POST /api/vehicles - admin can create vehicle', async () => {
     const res = await request(app)
       .post('/api/vehicles')
@@ -80,6 +96,30 @@ describe('Vehicles API', () => {
 });
 
 describe('Driver and parent identity uniqueness', () => {
+  test('GET /api/drivers/:id/trip-history - returns driver statistics and trips', async () => {
+    const { driver } = getTestData();
+    const res = await request(app)
+      .get(`/api/drivers/${driver.id}/trip-history?days=30`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.driver.id).toBe(driver.id);
+    expect(res.body.stats).toEqual(expect.objectContaining({
+      totalTrips: expect.any(Number),
+      completionRate: expect.any(Number),
+      totalDrivingMinutes: expect.any(Number),
+      attendance: expect.objectContaining({
+        expected: expect.any(Number),
+        boarded: expect.any(Number),
+        notBoarded: expect.any(Number),
+        absent: expect.any(Number),
+      }),
+    }));
+    expect(res.body.routeUsage).toBeInstanceOf(Array);
+    expect(res.body.vehicleUsage).toBeInstanceOf(Array);
+    expect(res.body.trips).toBeInstanceOf(Array);
+  });
+
   test('DELETE /api/drivers/:id permanently deletes a driver from this school', async () => {
     const { school } = getTestData();
     const driver = await User.create({
@@ -288,6 +328,30 @@ describe('Routes API', () => {
     expect(res.body.routes).toBeInstanceOf(Array);
     expect(res.body.routes.length).toBeGreaterThan(0);
     expect(res.body.routes[0].name).toBe('Test Route');
+  });
+
+  test('GET /api/routes/:id/trip-history - returns route statistics and trips', async () => {
+    const { route } = getTestData();
+    const res = await request(app)
+      .get(`/api/routes/${route.id}/trip-history?days=30`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.route.id).toBe(route.id);
+    expect(res.body.stats).toEqual(expect.objectContaining({
+      totalTrips: expect.any(Number),
+      completionRate: expect.any(Number),
+      totalOperatingMinutes: expect.any(Number),
+      attendance: expect.objectContaining({
+        expected: expect.any(Number),
+        boarded: expect.any(Number),
+        notBoarded: expect.any(Number),
+        absent: expect.any(Number),
+      }),
+    }));
+    expect(res.body.driverUsage).toBeInstanceOf(Array);
+    expect(res.body.vehicleUsage).toBeInstanceOf(Array);
+    expect(res.body.trips).toBeInstanceOf(Array);
   });
 
   test('POST /api/routes - admin can create route', async () => {

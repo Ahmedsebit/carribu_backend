@@ -43,6 +43,7 @@ router.get('/', c.listDrivers);
  *       404:
  *         description: Driver not found
  */
+router.get('/:id/trip-history', c.getTripHistory);
 router.get('/:id', c.getDriver);
 
 /**
