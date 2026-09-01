@@ -8,6 +8,7 @@ const PUSH_TITLES = {
   'trip-started': '🚌 Trip Started',
   'trip-reminder': '⏰ Trip Starting Soon',
   'trip-delayed': '⏱️ Trip Delayed',
+  'school-notification': 'School Transport Update',
   'trip-missed': '⚠️ Trip Not Started',
   'driver-approaching': '🚌 Driver Approaching',
   'driver-arrived': '📍 Bus Arrived',

@@ -1,5 +1,6 @@
-const { Message, User, Trip, Route, Student, School, RouteStudent } = require('../models');
+const { Message, User, Trip, Route, Student, School, RouteStudent, sequelize } = require('../models');
 const { Op } = require('sequelize');
+const { notifyUser } = require('../socket');
 exports.getConversations = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -36,6 +37,102 @@ exports.send = async (req, res) => {
     const msg = await Message.create({ schoolId: receiver.schoolId || req.user.schoolId, senderId: req.user.id, receiverId, content, messageType: messageType || 'text', tripId: tripId || null });
     const full = await Message.findByPk(msg.id, { include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }, { model: User, as: 'receiver', attributes: ['id','firstName','lastName','role'] }] });
     res.status(201).json({ message: full });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.sendTripNotification = async (req, res) => {
+  try {
+    const content = String(req.body.content || '').trim();
+    const allTrips = req.body.allTrips === true;
+    const date = String(req.body.date || '').trim();
+    const tripIds = [...new Set(
+      (Array.isArray(req.body.tripIds) ? req.body.tripIds : [])
+        .map(id => parseInt(id, 10))
+        .filter(Number.isInteger)
+    )];
+
+    if (!content) return res.status(400).json({ error: 'Notification message is required.' });
+    if (content.length > 2000) return res.status(400).json({ error: 'Notification message must be 2000 characters or fewer.' });
+    if (allTrips && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'A valid date is required when notifying all trips.' });
+    }
+    if (!allTrips && tripIds.length === 0) {
+      return res.status(400).json({ error: 'Select at least one trip.' });
+    }
+
+    const where = allTrips ? { scheduledDate: date } : { id: { [Op.in]: tripIds } };
+    const trips = await Trip.findAll({
+      where,
+      attributes: ['id'],
+      include: [{
+        model: Route,
+        as: 'route',
+        where: { schoolId: req.user.schoolId },
+        required: true,
+        attributes: ['id', 'name'],
+        include: [{
+          model: Student,
+          as: 'students',
+          where: { isActive: true },
+          required: false,
+          attributes: ['id', 'parentId'],
+          through: { attributes: [] },
+          include: [{
+            model: User,
+            as: 'parent',
+            where: { role: 'parent', isActive: true },
+            required: false,
+            attributes: ['id'],
+          }],
+        }],
+      }],
+    });
+
+    if (!allTrips && trips.length !== tripIds.length) {
+      return res.status(404).json({ error: 'One or more selected trips were not found for this school.' });
+    }
+    if (trips.length === 0) return res.status(400).json({ error: 'No trips were found for this notification.' });
+
+    const recipients = new Map();
+    trips.forEach(trip => {
+      (trip.route?.students || []).forEach(student => {
+        if (!student.parent) return;
+        const parentTrips = recipients.get(student.parent.id) || new Set();
+        parentTrips.add(trip.id);
+        recipients.set(student.parent.id, parentTrips);
+      });
+    });
+    if (recipients.size === 0) {
+      return res.status(400).json({ error: 'The selected trips do not have any linked parents.' });
+    }
+
+    await sequelize.transaction(async transaction => {
+      await Message.bulkCreate(
+        [...recipients.entries()].map(([parentId, parentTrips]) => ({
+          schoolId: req.user.schoolId,
+          senderId: req.user.id,
+          receiverId: parentId,
+          tripId: parentTrips.size === 1 ? [...parentTrips][0] : null,
+          content,
+          messageType: 'alert',
+        })),
+        { transaction }
+      );
+    });
+
+    recipients.forEach((parentTrips, parentId) => {
+      notifyUser(parentId, 'school-notification', {
+        message: content,
+        tripIds: [...parentTrips],
+        schoolId: req.user.schoolId,
+      });
+    });
+
+    res.status(201).json({
+      message: `Notification sent to ${recipients.size} ${recipients.size === 1 ? 'parent' : 'parents'}.`,
+      recipientCount: recipients.size,
+      tripCount: trips.length,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.reportAbsence = async (req, res) => {
