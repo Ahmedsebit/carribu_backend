@@ -50,6 +50,62 @@ describe('Trip Lifecycle', () => {
     tripId = res.body.trip.id;
   });
 
+  test('POST /api/trips - creates daily, weekday, and selected-day recurring trips', async () => {
+    const { route } = getTestData();
+    const schedules = [
+      {
+        scheduledDate: '2027-02-01',
+        scheduledTime: '08:00',
+        recurrence: { frequency: 'daily', endDate: '2027-02-03' },
+        expectedCount: 3,
+      },
+      {
+        scheduledDate: '2027-01-04',
+        scheduledTime: '09:00',
+        recurrence: { frequency: 'weekdays', endDate: '2027-01-10' },
+        expectedCount: 5,
+      },
+      {
+        scheduledDate: '2027-01-04',
+        scheduledTime: '10:00',
+        recurrence: { frequency: 'weekly', endDate: '2027-01-17', weekdays: [1, 3] },
+        expectedCount: 4,
+      },
+    ];
+
+    for (const schedule of schedules) {
+      const res = await request(app)
+        .post('/api/trips')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          routeId: route.id,
+          type: 'afternoon_dropoff',
+          scheduledDate: schedule.scheduledDate,
+          scheduledTime: schedule.scheduledTime,
+          recurrence: schedule.recurrence,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.count).toBe(schedule.expectedCount);
+      expect(res.body.trips).toHaveLength(schedule.expectedCount);
+    }
+
+    const duplicate = await request(app)
+      .post('/api/trips')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        routeId: route.id,
+        type: 'afternoon_dropoff',
+        scheduledDate: schedules[0].scheduledDate,
+        scheduledTime: schedules[0].scheduledTime,
+        recurrence: schedules[0].recurrence,
+      });
+
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.count).toBe(0);
+    expect(duplicate.body.skippedCount).toBe(3);
+  });
+
   test('GET /api/trips - admin can list trips', async () => {
     const res = await request(app)
       .get('/api/trips')

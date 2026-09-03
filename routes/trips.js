@@ -57,6 +57,24 @@ router.get('/:id/details', authorize('school_admin', 'coordinator'), c.getDetail
  *                 type: string
  *                 format: date
  *                 example: "2026-05-28"
+ *               scheduledTime:
+ *                 type: string
+ *                 example: "06:30"
+ *               recurrence:
+ *                 type: object
+ *                 properties:
+ *                   frequency:
+ *                     type: string
+ *                     enum: [daily, weekdays, weekly]
+ *                   endDate:
+ *                     type: string
+ *                     format: date
+ *                   weekdays:
+ *                     type: array
+ *                     items:
+ *                       type: integer
+ *                       minimum: 0
+ *                       maximum: 6
  *               notes:
  *                 type: string
  *     responses:
