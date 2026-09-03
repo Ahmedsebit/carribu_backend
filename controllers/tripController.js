@@ -10,6 +10,35 @@ function estimateETA(stopsAway) {
   return { minutes, text: minutes <= 1 ? '~1 minute' : `~${minutes} minutes` };
 }
 
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
+
+function parseDateOnly(value) {
+  if (!DATE_PATTERN.test(value || '')) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? null : date;
+}
+
+function formatDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildRecurringDates(startDate, endDate, frequency, weekdays = []) {
+  const selectedWeekdays = new Set(weekdays);
+  const dates = [];
+  for (const date = new Date(startDate); date <= endDate; date.setUTCDate(date.getUTCDate() + 1)) {
+    const day = date.getUTCDay();
+    if (
+      frequency === 'daily' ||
+      (frequency === 'weekdays' && day >= 1 && day <= 5) ||
+      (frequency === 'weekly' && selectedWeekdays.has(day))
+    ) {
+      dates.push(formatDateOnly(date));
+    }
+  }
+  return dates;
+}
+
 exports.getAll = async (req, res) => {
   try {
     // Refresh delayed/missed-trip state before listing so the admin dashboard
@@ -202,11 +231,98 @@ exports.getDetails = async (req, res) => {
 };
 exports.create = async (req, res) => {
   try {
-    const { routeId, type, scheduledDate, scheduledTime } = req.body;
+    const { routeId, type, scheduledDate, scheduledTime, notes, recurrence } = req.body;
+    const startDate = parseDateOnly(scheduledDate);
+    if (!startDate) return res.status(400).json({ error: 'A valid scheduled date is required.' });
+    if (!['morning_pickup', 'afternoon_dropoff'].includes(type)) {
+      return res.status(400).json({ error: 'A valid trip type is required.' });
+    }
+    if (scheduledTime && !TIME_PATTERN.test(scheduledTime)) {
+      return res.status(400).json({ error: 'Scheduled time must use HH:mm format.' });
+    }
+
     const route = await Route.findOne({ where: { id: routeId, schoolId: req.user.schoolId } });
     if (!route) return res.status(404).json({ error: 'Route not found.' });
-    const trip = await Trip.create({ routeId, driverId: route.driverId, vehicleId: route.vehicleId, type, scheduledDate, scheduledTime: scheduledTime || null, status: 'scheduled' });
-    res.status(201).json({ message: 'Trip scheduled.', trip });
+
+    if (!recurrence) {
+      const trip = await Trip.create({
+        routeId,
+        driverId: route.driverId,
+        vehicleId: route.vehicleId,
+        type,
+        scheduledDate,
+        scheduledTime: scheduledTime ? `${scheduledTime.slice(0, 5)}:00` : null,
+        notes: notes || null,
+        status: 'scheduled',
+      });
+      return res.status(201).json({ message: 'Trip scheduled.', trip, trips: [trip], count: 1, skippedCount: 0 });
+    }
+
+    const frequency = recurrence.frequency;
+    if (!['daily', 'weekdays', 'weekly'].includes(frequency)) {
+      return res.status(400).json({ error: 'Recurrence must be daily, weekdays, or weekly.' });
+    }
+    if (!scheduledTime) return res.status(400).json({ error: 'A scheduled time is required for recurring trips.' });
+
+    const endDate = parseDateOnly(recurrence.endDate);
+    if (!endDate) return res.status(400).json({ error: 'A valid recurrence end date is required.' });
+    if (endDate < startDate) return res.status(400).json({ error: 'Recurrence end date cannot be before the start date.' });
+    const rangeDays = Math.round((endDate - startDate) / 86400000);
+    if (rangeDays > 365) return res.status(400).json({ error: 'Recurring trips can be scheduled for at most one year.' });
+
+    const weekdays = [...new Set(
+      (Array.isArray(recurrence.weekdays) ? recurrence.weekdays : [])
+        .map(Number)
+        .filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+    )];
+    if (frequency === 'weekly' && weekdays.length === 0) {
+      return res.status(400).json({ error: 'Select at least one weekday for a weekly schedule.' });
+    }
+
+    const dates = buildRecurringDates(startDate, endDate, frequency, weekdays);
+    if (dates.length === 0) return res.status(400).json({ error: 'The recurrence pattern does not contain any trip dates.' });
+
+    const normalizedTime = `${scheduledTime.slice(0, 5)}:00`;
+    const result = await sequelize.transaction(async transaction => {
+      await sequelize.query('SELECT pg_advisory_xact_lock(:routeId)', {
+        replacements: { routeId: route.id },
+        transaction,
+      });
+      const existing = await Trip.findAll({
+        attributes: ['scheduledDate'],
+        where: {
+          routeId: route.id,
+          type,
+          scheduledDate: { [Op.in]: dates },
+          scheduledTime: normalizedTime,
+        },
+        transaction,
+      });
+      const existingDates = new Set(existing.map(trip => trip.scheduledDate));
+      const datesToCreate = dates.filter(date => !existingDates.has(date));
+      const trips = await Trip.bulkCreate(datesToCreate.map(date => ({
+        routeId: route.id,
+        driverId: route.driverId,
+        vehicleId: route.vehicleId,
+        type,
+        scheduledDate: date,
+        scheduledTime: normalizedTime,
+        notes: notes || null,
+        status: 'scheduled',
+      })), { transaction, returning: true });
+      return { trips, skippedCount: dates.length - datesToCreate.length };
+    });
+
+    const createdCount = result.trips.length;
+    return res.status(createdCount ? 201 : 200).json({
+      message: createdCount
+        ? `${createdCount} recurring ${createdCount === 1 ? 'trip' : 'trips'} scheduled.`
+        : 'All matching trips were already scheduled.',
+      trip: result.trips[0] || null,
+      trips: result.trips,
+      count: createdCount,
+      skippedCount: result.skippedCount,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.startTrip = async (req, res) => {
