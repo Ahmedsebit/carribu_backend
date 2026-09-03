@@ -19,7 +19,10 @@ exports.getAll = async (req, res) => {
 };
 exports.getById = async (req, res) => {
   try {
-    const student = await Student.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }, { model: Route, as: 'routes', through: { attributes: ['stopOrder'] } }] });
+    const where = req.user.role === 'parent'
+      ? { id: req.params.id, parentId: req.user.id }
+      : { id: req.params.id, schoolId: req.user.schoolId };
+    const student = await Student.findOne({ where, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }, { model: Route, as: 'routes', through: { attributes: ['stopOrder'] } }] });
     if (!student) return res.status(404).json({ error: 'Student not found.' });
     res.json({ student });
   } catch (err) { res.status(500).json({ error: err.message }); }

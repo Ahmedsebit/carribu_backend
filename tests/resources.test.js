@@ -307,13 +307,27 @@ describe('Students API', () => {
     expect(res.body.error).toMatch(/admission number/i);
   });
 
-  test('GET /api/students - parent cannot list all students', async () => {
+  test('GET /api/students - parent can list only their children', async () => {
+    const { parent, student1, student2 } = getTestData();
     const res = await request(app)
       .get('/api/students')
       .set('Authorization', `Bearer ${parentToken}`);
 
-    // Should be forbidden or filtered
-    expect([200, 403]).toContain(res.status);
+    expect(res.status).toBe(200);
+    expect(res.body.students.length).toBeGreaterThan(0);
+    expect(res.body.students.every(student => student.parentId === parent.id)).toBe(true);
+    expect(res.body.students.map(student => student.id)).toContain(student1.id);
+    expect(res.body.students.map(student => student.id)).not.toContain(student2.id);
+  });
+
+  test('GET /api/students/:id - parent cannot view another parent child', async () => {
+    const { student2 } = getTestData();
+    const res = await request(app)
+      .get(`/api/students/${student2.id}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/not found/i);
   });
 });
 
