@@ -257,3 +257,63 @@ describe('Trip Access Control', () => {
     expect(res.status).toBe(403);
   });
 });
+
+
+describe('DELETE /api/trips/:id', () => {
+  test('parent cannot delete trips', async () => {
+    const res = await request(app)
+      .delete(`/api/trips/${conflictingTripId}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  test('admin cannot delete a trip that is in progress', async () => {
+    const { route } = getTestData();
+    const created = await request(app)
+      .post('/api/trips')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ routeId: route.id, type: 'morning_pickup', scheduledDate: '2027-03-01' });
+    const inProgressTripId = created.body.trip.id;
+
+    await request(app)
+      .put(`/api/trips/${inProgressTripId}/start`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    const res = await request(app)
+      .delete(`/api/trips/${inProgressTripId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/in progress/i);
+  });
+
+  test('admin can delete a scheduled trip', async () => {
+    const res = await request(app)
+      .delete(`/api/trips/${conflictingTripId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+
+    const list = await request(app)
+      .get('/api/trips')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(list.body.trips.find((t) => t.id === conflictingTripId)).toBeUndefined();
+  });
+
+  test('admin can delete a completed trip', async () => {
+    const res = await request(app)
+      .delete(`/api/trips/${tripId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+  });
+
+  test('deleting a non-existent trip returns 404', async () => {
+    const res = await request(app)
+      .delete('/api/trips/999999')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(404);
+  });
+});

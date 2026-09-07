@@ -31,4 +31,22 @@ router.use(schoolTenancy);
  */
 router.get('/trip-history', c.getTripHistory);
 
+/**
+ * @swagger
+ * /api/parent/upcoming-trips:
+ *   get:
+ *     summary: Scheduled trips that will carry the parent's children (default the next day)
+ *     tags: [Parent]
+ *     parameters:
+ *       - in: query
+ *         name: days
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *     responses:
+ *       200:
+ *         description: List of upcoming scheduled/delayed trips
+ */
+router.get('/upcoming-trips', c.getUpcomingTrips);
+
 module.exports = router;

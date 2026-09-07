@@ -26,6 +26,7 @@ app.use('/api/trips', require('../routes/trips'));
 app.use('/api/messages', require('../routes/messages'));
 app.use('/api/location', require('../routes/location'));
 app.use('/api/driver', require('../routes/driver'));
+app.use('/api/parent', require('../routes/parent'));
 app.use('/api/parents', require('../routes/parents'));
 app.use('/api/drivers', require('../routes/drivers'));
 app.use('/api/import', require('../routes/import'));

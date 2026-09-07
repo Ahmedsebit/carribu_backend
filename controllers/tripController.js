@@ -451,6 +451,17 @@ exports.endTrip = async (req, res) => {
     res.json({ message: 'Trip completed.', trip });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
+exports.delete = async (req, res) => {
+  try {
+    const trip = await Trip.findByPk(req.params.id, { include: [{ model: Route, as: 'route', where: { schoolId: req.user.schoolId }, attributes: [] }] });
+    if (!trip) return res.status(404).json({ error: 'Trip not found.' });
+    if (trip.status === 'in_progress') {
+      return res.status(409).json({ error: 'This trip is in progress. End the trip before deleting it.' });
+    }
+    await trip.destroy();
+    res.json({ message: 'Trip deleted.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
 exports.logAction = async (req, res) => {
   try {
     const { studentId, action, lat, lng, notes } = req.body;
