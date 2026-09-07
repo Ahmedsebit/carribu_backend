@@ -250,3 +250,72 @@ exports.getTripHistory = async (req, res) => {
     res.json({ trips: result, total: result.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
+
+// Format a Date using its local calendar day (avoids the UTC-shift bug of
+// toISOString(), which can land on the wrong day for timezones ahead of UTC).
+const toLocalDateStr = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+// Self-service: scheduled trips (default the next 1 day, i.e. "tomorrow")
+// that will carry the authenticated parent's children. Only the parent's
+// own children are exposed on each trip for privacy.
+exports.getUpcomingTrips = async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days, 10) || 1, 14);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const from = new Date(today); from.setDate(from.getDate() + 1);
+    const to = new Date(today); to.setDate(to.getDate() + days);
+    const fromStr = toLocalDateStr(from);
+    const toStr = toLocalDateStr(to);
+
+    const children = await Student.findAll({
+      where: { parentId: req.user.id },
+      include: [{ model: Route, as: 'routes', attributes: ['id', 'name'], through: { attributes: [] } }],
+    });
+    if (!children.length) return res.json({ trips: [], total: 0 });
+
+    const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
+    if (!routeIds.length) return res.json({ trips: [], total: 0 });
+
+    const trips = await Trip.findAll({
+      where: {
+        routeId: { [Op.in]: routeIds },
+        status: { [Op.in]: ['scheduled', 'delayed'] },
+        scheduledDate: { [Op.between]: [fromStr, toStr] },
+      },
+      include: [
+        {
+          model: Route,
+          as: 'route',
+          attributes: ['id', 'name', 'schoolId'],
+          include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
+        },
+        { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
+        { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+      ],
+      order: [['scheduled_date', 'ASC'], ['scheduled_time', 'ASC']],
+    });
+
+    const result = trips.map(trip => {
+      const t = trip.toJSON();
+      const myChildren = children
+        .filter(c => (c.routes || []).some(r => r.id === t.routeId))
+        .map(c => ({ studentId: c.id, studentName: `${c.firstName} ${c.lastName}`, grade: c.grade }));
+      return {
+        id: t.id, scheduledDate: t.scheduledDate, scheduledTime: t.scheduledTime,
+        type: t.type, status: t.status,
+        route: { id: t.route?.id, name: t.route?.name },
+        school: t.route?.school || null,
+        vehicle: t.vehicle,
+        driver: t.driver ? { id: t.driver.id, name: `${t.driver.firstName} ${t.driver.lastName}`, phone: t.driver.phone } : null,
+        children: myChildren,
+      };
+    });
+
+    res.json({ trips: result, total: result.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};

@@ -204,4 +204,26 @@ router.post('/:id/log', authorize('school_admin','coordinator','driver'), c.logA
  */
 router.get('/:id/logs', c.getTripLogs);
 
+/**
+ * @swagger
+ * /api/trips/{id}:
+ *   delete:
+ *     summary: Delete a scheduled/completed trip (in-progress trips must be ended first)
+ *     tags: [Trips]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Trip deleted
+ *       404:
+ *         description: Trip not found
+ *       409:
+ *         description: Trip is in progress
+ */
+router.delete('/:id', authorize('school_admin','coordinator'), c.delete);
+
 module.exports = router;
