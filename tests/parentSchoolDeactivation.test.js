@@ -154,5 +154,31 @@ describe('Parent school deactivation', () => {
       .toContain(otherSchoolNotification.id);
     expect(notificationsResponse.body.notifications.map(notification => notification.id))
       .not.toContain(oldSchoolNotification.id);
+
+    const inactiveListResponse = await request(app)
+      .get('/api/parents')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const inactiveParent = inactiveListResponse.body.parents.find(item => item.id === parent.id);
+    expect(inactiveParent.schoolAccessActive).toBe(false);
+
+    const reactivateResponse = await request(app)
+      .put(`/api/parents/${parent.id}/reactivate`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(reactivateResponse.status).toBe(200);
+    expect(reactivateResponse.body.message).toMatch(/reactivated/i);
+
+    const restoredMembership = await ParentSchool.findOne({
+      where: { parentId: parent.id, schoolId: school.id },
+    });
+    expect(restoredMembership.isActive).toBe(true);
+
+    const restoredTripsResponse = await request(app)
+      .get('/api/parent/upcoming-trips')
+      .query({ days: 7 })
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(restoredTripsResponse.body.filters.schools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: school.id }),
+      expect.objectContaining({ id: otherSchool.id }),
+    ]));
   });
 });
