@@ -15,7 +15,7 @@ exports.listParents = async (req, res) => {
         {
           model: ParentSchool,
           as: 'schoolMemberships',
-          where: { schoolId: req.user.schoolId },
+          where: { schoolId: req.user.schoolId, isActive: true },
           attributes: [],
           required: true,
         },
@@ -41,7 +41,7 @@ exports.getParent = async (req, res) => {
         {
           model: ParentSchool,
           as: 'schoolMemberships',
-          where: { schoolId: req.user.schoolId },
+          where: { schoolId: req.user.schoolId, isActive: true },
           attributes: [],
           required: true,
         },
@@ -78,17 +78,19 @@ exports.createParent = async (req, res) => {
     }
     const existing = matches[0];
     if (existing) {
-      const [, created] = await ParentSchool.findOrCreate({
+      const [membership, created] = await ParentSchool.findOrCreate({
         where: { parentId: existing.id, schoolId: req.user.schoolId },
+        defaults: { isActive: true },
       });
-      if (!created) {
+      if (!created && membership.isActive) {
         return res.status(409).json({
           error: 'A user with this email or phone number already belongs to this school',
         });
       }
+      if (!created) await membership.update({ isActive: true });
       return res.status(200).json({
         parent: existing,
-        message: 'Existing parent added to this school.',
+        message: created ? 'Existing parent added to this school.' : 'Parent access to this school restored.',
       });
     }
 
@@ -127,7 +129,7 @@ exports.updateParent = async (req, res) => {
       include: [{
         model: ParentSchool,
         as: 'schoolMemberships',
-        where: { schoolId: req.user.schoolId },
+        where: { schoolId: req.user.schoolId, isActive: true },
         attributes: [],
         required: true,
       }],
@@ -162,18 +164,12 @@ exports.deleteParent = async (req, res) => {
         lock: transaction.LOCK.UPDATE,
       });
       if (!membership) return false;
-      await Student.update(
-        { parentId: null },
-        {
-          where: { parentId: req.params.id, schoolId: req.user.schoolId },
-          transaction,
-        },
-      );
-      await membership.destroy({ transaction });
+      if (!membership.isActive) return false;
+      await membership.update({ isActive: false }, { transaction });
       return true;
     });
     if (!deleted) return res.status(404).json({ error: 'Parent not found' });
-    res.json({ message: 'Parent removed from this school' });
+    res.json({ message: 'Parent access to this school deactivated.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -194,8 +190,16 @@ const summarizeStudent = (studentId, logs) => {
 };
 
 const getParentTripFilters = async (parentId, query) => {
-  const allChildren = await Student.findAll({
+  const activeMemberships = await ParentSchool.findAll({
     where: { parentId, isActive: true },
+    attributes: ['schoolId'],
+  });
+  const activeSchoolIds = activeMemberships.map(membership => membership.schoolId);
+  if (activeSchoolIds.length === 0) {
+    return { children: [], filters: { schools: [], students: [] } };
+  }
+  const allChildren = await Student.findAll({
+    where: { parentId, schoolId: { [Op.in]: activeSchoolIds }, isActive: true },
     attributes: ['id', 'schoolId', 'admissionNumber', 'firstName', 'lastName', 'grade'],
     include: [
       { model: School, as: 'school', attributes: ['id', 'name'] },

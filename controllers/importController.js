@@ -186,13 +186,18 @@ exports.importParentsAndStudents = async (req, res) => {
           });
         }
 
-        const [, membershipCreated] = await ParentSchool.findOrCreate({
+        const [membership, membershipCreated] = await ParentSchool.findOrCreate({
           where: { parentId: parent.id, schoolId },
+          defaults: { isActive: true },
           transaction,
         });
-        if (membershipCreated && parent.schoolId !== schoolId) {
+        const membershipRestored = !membershipCreated && !membership.isActive;
+        if (membershipRestored) {
+          await membership.update({ isActive: true }, { transaction });
+        }
+        if ((membershipCreated || membershipRestored) && parent.schoolId !== schoolId) {
           results.parentsLinked++;
-        } else if (!membershipCreated) {
+        } else if (!membershipCreated && !membershipRestored) {
           results.skipped.push(`Parent "${parentData.name}" already exists (phone: ${phone})`);
         }
 

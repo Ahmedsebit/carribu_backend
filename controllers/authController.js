@@ -4,7 +4,7 @@ const parentSchoolsInclude = {
   model: School,
   as: 'parentSchools',
   attributes: ['id', 'name'],
-  through: { attributes: [] },
+  through: { attributes: [], where: { isActive: true } },
 };
 const { logLogin } = require('../middleware/auditLog');
 const { normalizePhoneE164 } = require('../utils/phone');
@@ -12,6 +12,12 @@ const generateToken = (user) => jwt.sign(
   { id: user.id, email: user.email, role: user.role, schoolId: user.schoolId },
   process.env.JWT_SECRET || 'default-secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
 );
+const hideInactivePrimarySchool = user => {
+  if (user?.role !== 'parent' || !user.school) return user;
+  const activeSchoolIds = new Set((user.parentSchools || []).map(school => school.id));
+  if (!activeSchoolIds.has(user.school.id)) user.setDataValue('school', null);
+  return user;
+};
 exports.register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, role, phone, schoolId } = req.body;
@@ -64,6 +70,7 @@ exports.login = async (req, res) => {
     }
     const user = matchingUsers[0];
     if (!user.isActive) return res.status(403).json({ error: 'Account deactivated.' });
+    hideInactivePrimarySchool(user);
     await logLogin(user.id, loginIdentifier, req.ip, true);
     res.json({ message: 'Login successful.', token: generateToken(user), user });
   } catch (err) { res.status(500).json({ error: 'Login failed.', details: err.message }); }
@@ -77,6 +84,7 @@ exports.getMe = async (req, res) => {
       ],
     });
     if (!user) return res.status(404).json({ error: 'User not found.' });
+    hideInactivePrimarySchool(user);
     res.json({ user });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
@@ -126,6 +134,7 @@ exports.completeRegistration = async (req, res) => {
         parentSchoolsInclude,
       ],
     });
+    hideInactivePrimarySchool(registeredUser);
     res.json({ message: 'Registration complete.', token: generateToken(user), user: registeredUser });
   } catch (err) { res.status(500).json({ error: 'Could not complete registration.', details: err.message }); }
 };
@@ -155,7 +164,14 @@ exports.updateProfile = async (req, res) => {
     if (dropoffLat !== undefined) user.dropoffLat = dropoffLat;
     if (dropoffLng !== undefined) user.dropoffLng = dropoffLng;
     await user.save();
-    const updated = await User.findByPk(user.id, { attributes: { exclude: ['passwordHash'] }, include: [{ model: School, as: 'school', attributes: ['id','name'] }] });
+    const updated = await User.findByPk(user.id, {
+      attributes: { exclude: ['passwordHash'] },
+      include: [
+        { model: School, as: 'school', attributes: ['id','name'] },
+        parentSchoolsInclude,
+      ],
+    });
+    hideInactivePrimarySchool(updated);
     res.json({ user: updated, message: 'Profile updated.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

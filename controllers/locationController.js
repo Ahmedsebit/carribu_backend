@@ -1,5 +1,11 @@
 const { BusLocation, Trip, Route, Vehicle, User, Student, TripLog, Message, School } = require('../models');
 const { notifyTrip, notifyUser } = require('../socket');
+const { Op } = require('sequelize');
+const {
+  getActiveParentSchoolIds,
+  hasActiveParentSchool,
+  getActiveParentIdsForSchool,
+} = require('../utils/parentSchoolAccess');
 const toRadians = deg => deg * Math.PI / 180;
 const distanceInMeters = (lat1, lng1, lat2, lng2) => {
   const R = 6371000;
@@ -31,6 +37,10 @@ exports.updateLocation = async (req, res) => {
 
     const route = await Route.findByPk(trip.routeId, { include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] }] }] });
     if (route) {
+      const activeParentIds = await getActiveParentIdsForSchool(
+        (route.students || []).map(student => student.parent?.id),
+        route.schoolId
+      );
       const logs = await TripLog.findAll({ where: { tripId }, order: [['created_at','DESC']] });
       const latestAction = logs.reduce((acc, log) => {
         if (!acc[log.studentId]) acc[log.studentId] = log.action;
@@ -39,7 +49,7 @@ exports.updateLocation = async (req, res) => {
       const pendingStudents = (route.students || []).filter(s => {
         const action = latestAction[s.id];
         return action !== 'absent' && action !== 'check_out' && action !== 'check_in';
-      }).filter(s => s.parent && s.parent.pickupLat && s.parent.pickupLng);
+      }).filter(s => s.parent && activeParentIds.has(s.parent.id) && s.parent.pickupLat && s.parent.pickupLng);
 
       // Notify parents when bus is ~5 minutes away from their child
       const DEFAULT_SPEED_KMH = 30;
@@ -86,6 +96,27 @@ exports.updateLocation = async (req, res) => {
 };
 exports.getBusLocation = async (req, res) => {
   try {
+    if (req.user.role === 'parent') {
+      const tripAccess = await Trip.findByPk(req.params.tripId, {
+        attributes: ['id', 'routeId'],
+        include: [{ model: Route, as: 'route', attributes: ['id', 'schoolId'] }],
+      });
+      if (!tripAccess || !await hasActiveParentSchool(req.user.id, tripAccess.route?.schoolId)) {
+        return res.status(404).json({ error: 'Trip not found.' });
+      }
+      const childOnRoute = await Student.findOne({
+        where: { parentId: req.user.id, schoolId: tripAccess.route.schoolId, isActive: true },
+        include: [{
+          model: Route,
+          as: 'routes',
+          where: { id: tripAccess.routeId },
+          attributes: [],
+          through: { attributes: [] },
+          required: true,
+        }],
+      });
+      if (!childOnRoute) return res.status(404).json({ error: 'Trip not found.' });
+    }
     const loc = await BusLocation.findOne({ where: { tripId: req.params.tripId }, include: [
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','color'] },
       { model: User, as: 'driver', attributes: ['id','firstName','lastName','phone'] },
@@ -97,6 +128,27 @@ exports.getBusLocation = async (req, res) => {
 };
 exports.getLocationHistory = async (req, res) => {
   try {
+    if (req.user.role === 'parent') {
+      const tripAccess = await Trip.findByPk(req.params.tripId, {
+        attributes: ['id', 'routeId'],
+        include: [{ model: Route, as: 'route', attributes: ['id', 'schoolId'] }],
+      });
+      if (!tripAccess || !await hasActiveParentSchool(req.user.id, tripAccess.route?.schoolId)) {
+        return res.status(404).json({ error: 'Trip not found.' });
+      }
+      const childOnRoute = await Student.findOne({
+        where: { parentId: req.user.id, schoolId: tripAccess.route.schoolId, isActive: true },
+        include: [{
+          model: Route,
+          as: 'routes',
+          where: { id: tripAccess.routeId },
+          attributes: [],
+          through: { attributes: [] },
+          required: true,
+        }],
+      });
+      if (!childOnRoute) return res.status(404).json({ error: 'Trip not found.' });
+    }
     const locs = await BusLocation.findAll({ where: { tripId: req.params.tripId }, attributes: ['lat','lng','speed','heading','recordedAt'], order: [['recorded_at','ASC']] });
     res.json({ locations: locs.map(l => ({ lat: parseFloat(l.lat), lng: parseFloat(l.lng), speed: l.speed ? parseFloat(l.speed) : null, recordedAt: l.recordedAt })), total: locs.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -104,7 +156,8 @@ exports.getLocationHistory = async (req, res) => {
 exports.getMyChildBus = async (req, res) => {
   try {
     const parentUser = await User.findByPk(req.user.id, { attributes: ['id','pickupLat','pickupLng','dropoffLat','dropoffLng'] });
-    const children = await Student.findAll({ where: { parentId: req.user.id }, include: [{ model: Route, as: 'routes', through: { attributes: ['stopOrder'] }, include: [
+    const activeSchoolIds = await getActiveParentSchoolIds(req.user.id);
+    const children = await Student.findAll({ where: { parentId: req.user.id, schoolId: { [Op.in]: activeSchoolIds }, isActive: true }, include: [{ model: Route, as: 'routes', through: { attributes: ['stopOrder'] }, include: [
       { model: Trip, as: 'trips', where: { status: 'in_progress' }, required: false, include: [
         { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','color'] },
         { model: User, as: 'driver', attributes: ['id','firstName','lastName','phone'] },

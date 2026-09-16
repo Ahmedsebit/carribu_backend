@@ -15,6 +15,12 @@ const ParentSchool = sequelize.define('ParentSchool', {
     field: 'school_id',
     references: { model: 'schools', key: 'id' },
   },
+  isActive: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+    field: 'is_active',
+  },
 }, {
   tableName: 'parent_schools',
   indexes: [{
