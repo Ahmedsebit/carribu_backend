@@ -122,6 +122,28 @@ router.put('/:id', parentController.updateParent);
 
 /**
  * @swagger
+ * /api/parents/{id}/reactivate:
+ *   put:
+ *     summary: Reactivate a parent's access to this school
+ *     tags: [Parents]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Parent school access reactivated
+ *       404:
+ *         description: Parent or school membership not found
+ *       409:
+ *         description: Parent already has access
+ */
+router.put('/:id/reactivate', parentController.reactivateParent);
+
+/**
+ * @swagger
  * /api/parents/{id}:
  *   delete:
  *     summary: Deactivate a parent's access to this school

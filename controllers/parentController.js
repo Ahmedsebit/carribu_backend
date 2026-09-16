@@ -15,8 +15,8 @@ exports.listParents = async (req, res) => {
         {
           model: ParentSchool,
           as: 'schoolMemberships',
-          where: { schoolId: req.user.schoolId, isActive: true },
-          attributes: [],
+          where: { schoolId: req.user.schoolId },
+          attributes: ['isActive'],
           required: true,
         },
         {
@@ -28,7 +28,14 @@ exports.listParents = async (req, res) => {
       ],
       order: [['firstName', 'ASC'], ['lastName', 'ASC']],
     });
-    res.json({ parents });
+    res.json({
+      parents: parents.map(parent => {
+        const row = parent.toJSON();
+        row.schoolAccessActive = row.schoolMemberships?.[0]?.isActive === true;
+        delete row.schoolMemberships;
+        return row;
+      }),
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -170,6 +177,35 @@ exports.deleteParent = async (req, res) => {
     });
     if (!deleted) return res.status(404).json({ error: 'Parent not found' });
     res.json({ message: 'Parent access to this school deactivated.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.reactivateParent = async (req, res) => {
+  try {
+    const result = await sequelize.transaction(async transaction => {
+      const parent = await User.findOne({
+        where: { id: req.params.id, role: 'parent', isActive: true },
+        attributes: ['id'],
+        transaction,
+      });
+      if (!parent) return { status: 404, error: 'Parent not found' };
+
+      const membership = await ParentSchool.findOne({
+        where: { parentId: parent.id, schoolId: req.user.schoolId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!membership) return { status: 404, error: 'Parent is not linked to this school' };
+      if (membership.isActive) {
+        return { status: 409, error: 'Parent already has access to this school' };
+      }
+
+      await membership.update({ isActive: true }, { transaction });
+      return { status: 200 };
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json({ message: 'Parent access to this school reactivated.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
