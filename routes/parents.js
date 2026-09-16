@@ -124,7 +124,7 @@ router.put('/:id', parentController.updateParent);
  * @swagger
  * /api/parents/{id}:
  *   delete:
- *     summary: Deactivate a parent
+ *     summary: Deactivate a parent's access to this school
  *     tags: [Parents]
  *     parameters:
  *       - in: path
@@ -134,7 +134,7 @@ router.put('/:id', parentController.updateParent);
  *           type: integer
  *     responses:
  *       200:
- *         description: Parent deactivated
+ *         description: Parent school access deactivated
  *       404:
  *         description: Parent not found
  */

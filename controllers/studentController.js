@@ -1,12 +1,16 @@
 const { Student, User, School, Route, RouteStudent } = require('../models');
 const { Op } = require('sequelize');
+const { getActiveParentSchoolIds } = require('../utils/parentSchoolAccess');
 const {
   getRouteStart,
   replaceRouteStudentOrder,
 } = require('../services/routeOrdering');
 exports.getAll = async (req, res) => {
   try {
-    const where = req.user.role === 'parent' ? { parentId: req.user.id } : { schoolId: req.user.schoolId };
+    const activeSchoolIds = req.user.role === 'parent' ? await getActiveParentSchoolIds(req.user.id) : null;
+    const where = req.user.role === 'parent'
+      ? { parentId: req.user.id, schoolId: { [Op.in]: activeSchoolIds } }
+      : { schoolId: req.user.schoolId };
     if (req.query.grade) where.grade = req.query.grade;
     if (req.query.search) where[Op.or] = [
       { admissionNumber: { [Op.iLike]: `%${req.query.search}%` } },
@@ -23,8 +27,9 @@ exports.getAll = async (req, res) => {
 };
 exports.getById = async (req, res) => {
   try {
+    const activeSchoolIds = req.user.role === 'parent' ? await getActiveParentSchoolIds(req.user.id) : null;
     const where = req.user.role === 'parent'
-      ? { id: req.params.id, parentId: req.user.id }
+      ? { id: req.params.id, parentId: req.user.id, schoolId: { [Op.in]: activeSchoolIds } }
       : { id: req.params.id, schoolId: req.user.schoolId };
     const student = await Student.findOne({ where, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }, { model: Route, as: 'routes', through: { attributes: ['stopOrder'] } }] });
     if (!student) return res.status(404).json({ error: 'Student not found.' });

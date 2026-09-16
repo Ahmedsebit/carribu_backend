@@ -1,6 +1,7 @@
 const { Message, User, Trip, Route, Student, School, RouteStudent, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser } = require('../socket');
+const { getActiveParentSchoolIds, getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
 
 const visibleToUser = userId => ({
   [Op.or]: [
@@ -121,6 +122,13 @@ exports.sendTripNotification = async (req, res) => {
         recipients.set(student.parent.id, parentTrips);
       });
     });
+    const activeParentIds = await getActiveParentIdsForSchool(
+      [...recipients.keys()],
+      req.user.schoolId
+    );
+    for (const parentId of recipients.keys()) {
+      if (!activeParentIds.has(parentId)) recipients.delete(parentId);
+    }
     if (recipients.size === 0) {
       return res.status(400).json({ error: 'The selected trips do not have any linked parents.' });
     }
@@ -159,7 +167,17 @@ exports.reportAbsence = async (req, res) => {
     const { studentId, studentIds, reason, date } = req.body;
     const ids = studentIds && Array.isArray(studentIds) ? studentIds.map(id => parseInt(id)).filter(Boolean) : studentId ? [parseInt(studentId)] : [];
     if (ids.length === 0) return res.status(400).json({ error: 'studentId or studentIds required.' });
-    const students = await Student.findAll({ where: { id: ids }, include: [{ model: Route, as: 'routes', include: [{ model: User, as: 'driver', attributes: ['id','firstName','lastName'] }, { model: School, as: 'school', attributes: ['id','name'] }] }] });
+    const activeSchoolIds = req.user.role === 'parent'
+      ? await getActiveParentSchoolIds(req.user.id)
+      : [req.user.schoolId];
+    const students = await Student.findAll({
+      where: {
+        id: ids,
+        schoolId: { [Op.in]: activeSchoolIds },
+        ...(req.user.role === 'parent' ? { parentId: req.user.id } : {}),
+      },
+      include: [{ model: Route, as: 'routes', include: [{ model: User, as: 'driver', attributes: ['id','firstName','lastName'] }, { model: School, as: 'school', attributes: ['id','name'] }] }],
+    });
     if (students.length === 0) return res.status(404).json({ error: 'Student(s) not found.' });
     const sent = [];
     for (const student of students) {
@@ -180,7 +198,21 @@ exports.reportAbsence = async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getUnreadCount = async (req, res) => {
-  try { const count = await Message.count({ where: { receiverId: req.user.id, receiverDeletedAt: null, isRead: false } }); res.json({ unreadCount: count }); }
+  try {
+    const where = { receiverId: req.user.id, receiverDeletedAt: null, isRead: false };
+    if (req.user.role === 'parent') {
+      const activeSchoolIds = await getActiveParentSchoolIds(req.user.id);
+      where[Op.or] = [
+        { messageType: { [Op.in]: ['text', 'absence'] } },
+        {
+          messageType: { [Op.in]: ['alert', 'arrival', 'system'] },
+          schoolId: { [Op.in]: activeSchoolIds },
+        },
+      ];
+    }
+    const count = await Message.count({ where });
+    res.json({ unreadCount: count });
+  }
   catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getRouteParents = async (req, res) => {
@@ -196,7 +228,10 @@ exports.getRouteParents = async (req, res) => {
 exports.getMyDrivers = async (req, res) => {
   try {
     const userId = req.user.id;
-    const children = await Student.findAll({ where: { parentId: userId, isActive: true } });
+    const activeSchoolIds = await getActiveParentSchoolIds(userId);
+    const children = await Student.findAll({
+      where: { parentId: userId, schoolId: { [Op.in]: activeSchoolIds }, isActive: true },
+    });
     if (children.length === 0) return res.json({ drivers: [] });
     const childIds = children.map(c => c.id);
     const routeStudents = await RouteStudent.findAll({ where: { studentId: childIds } });
@@ -216,8 +251,16 @@ exports.getMyDrivers = async (req, res) => {
 // Get system/alert notifications for a user
 exports.getNotifications = async (req, res) => {
   try {
+    const where = {
+      receiverId: req.user.id,
+      receiverDeletedAt: null,
+      messageType: { [Op.in]: ['alert', 'arrival', 'system'] },
+    };
+    if (req.user.role === 'parent') {
+      where.schoolId = { [Op.in]: await getActiveParentSchoolIds(req.user.id) };
+    }
     const msgs = await Message.findAll({
-      where: { receiverId: req.user.id, receiverDeletedAt: null, messageType: { [Op.in]: ['alert', 'arrival', 'system'] } },
+      where,
       include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }],
       order: [['created_at', 'DESC']],
       limit: 50,

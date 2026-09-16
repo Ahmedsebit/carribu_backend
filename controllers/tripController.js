@@ -8,6 +8,7 @@ const {
   replaceRouteStudentOrder,
   sortStudentsForTrip,
 } = require('../services/routeOrdering');
+const { getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
 
 // Helper: calculate ETA based on stops away (avg 3 min per stop)
 function estimateETA(stopsAway) {
@@ -569,8 +570,12 @@ exports.startTrip = async (req, res) => {
     // Notify all parents on this route that the trip has started
     if (trip.route && trip.route.students) {
       const driverName = trip.driver ? `${trip.driver.firstName} ${trip.driver.lastName}` : 'Your driver';
+      const activeParentIds = await getActiveParentIdsForSchool(
+        trip.route.students.map(student => student.parent?.id),
+        req.user.schoolId
+      );
       for (const student of trip.route.students) {
-        if (student.parent) {
+        if (student.parent && activeParentIds.has(student.parent.id)) {
           const content = `🚌 Trip started! ${driverName} is now on the way to pick up ${student.firstName}. Track live in the app.`;
           await Message.create({
             schoolId: req.user.schoolId, senderId: req.user.id,
@@ -622,8 +627,12 @@ exports.logAction = async (req, res) => {
 
     if (trip.route && trip.route.students) {
       const pickedStudent = trip.route.students.find(s => s.id === studentId);
+      const activeParentIds = await getActiveParentIdsForSchool(
+        trip.route.students.map(student => student.parent?.id),
+        req.user.schoolId
+      );
 
-      if (action === 'arrived' && pickedStudent && pickedStudent.parent) {
+      if (action === 'arrived' && pickedStudent && pickedStudent.parent && activeParentIds.has(pickedStudent.parent.id)) {
         // Notify the parent that driver has arrived at their location
         const content = `🚌 The bus has arrived at your pickup location for ${pickedStudent.firstName}!`;
         await Message.create({
@@ -638,7 +647,7 @@ exports.logAction = async (req, res) => {
 
       if (action === 'check_in' && pickedStudent) {
         // Notify this parent that their child was picked up
-        if (pickedStudent.parent) {
+        if (pickedStudent.parent && activeParentIds.has(pickedStudent.parent.id)) {
           const pickupMsg = `✅ ${pickedStudent.firstName} has been picked up and is on the bus!`;
           await Message.create({
             schoolId: req.user.schoolId, senderId: req.user.id,
@@ -653,7 +662,7 @@ exports.logAction = async (req, res) => {
         // Notify next 3 parents that the driver is approaching
         const pickedOrder = pickedStudent.RouteStudent.stopOrder;
         const upcomingStudents = trip.route.students
-          .filter(s => s.RouteStudent.stopOrder > pickedOrder && s.parent)
+          .filter(s => s.RouteStudent.stopOrder > pickedOrder && s.parent && activeParentIds.has(s.parent.id))
           .sort((a, b) => a.RouteStudent.stopOrder - b.RouteStudent.stopOrder)
           .slice(0, 3);
 
