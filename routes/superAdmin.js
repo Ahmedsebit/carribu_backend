@@ -113,6 +113,7 @@ router.get('/schools/:id', c.getSchool);
  *         description: School not found
  */
 router.get('/schools/:id/stats', c.schoolStats);
+router.get('/schools/:id/resources', c.getSchoolResources);
 
 /**
  * @swagger
@@ -227,6 +228,27 @@ router.post('/schools/:id/deactivate', c.deactivateSchool);
  *         description: School not found
  */
 router.post('/schools/:id/activate', c.activateSchool);
+
+/**
+ * @swagger
+ * /api/super-admin/schools/{id}:
+ *   delete:
+ *     summary: Permanently delete a school and all school-owned data
+ *     tags: [Super Admin]
+ */
+router.delete('/schools/:id', c.permanentlyDeleteSchool);
+
+/**
+ * @swagger
+ * /api/super-admin/schools/{schoolId}/resources/{type}/{resourceId}:
+ *   delete:
+ *     summary: Permanently delete a school resource and dependent records
+ *     tags: [Super Admin]
+ */
+router.delete(
+  '/schools/:schoolId/resources/:type/:resourceId',
+  c.permanentlyDeleteSchoolResource
+);
 
 // --- School Admin Management ---
 
