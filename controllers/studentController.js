@@ -1,10 +1,37 @@
-const { Student, User, School, Route, RouteStudent } = require('../models');
+const { Student, User, ParentSchool, School, Route, RouteStudent } = require('../models');
 const { Op } = require('sequelize');
 const { getActiveParentSchoolIds } = require('../utils/parentSchoolAccess');
 const {
   getRouteStart,
   replaceRouteStudentOrder,
 } = require('../services/routeOrdering');
+
+const validateParentLink = async (parentId, schoolId) => {
+  if (parentId === null || parentId === undefined || parentId === '') return null;
+  const parsedParentId = Number.parseInt(parentId, 10);
+  if (!Number.isInteger(parsedParentId) || parsedParentId <= 0) {
+    const error = new Error('Invalid parent.');
+    error.status = 400;
+    throw error;
+  }
+  const membership = await ParentSchool.findOne({
+    where: { parentId: parsedParentId, schoolId, isActive: true },
+    include: [{
+      model: User,
+      as: 'parent',
+      where: { role: 'parent', isActive: true },
+      attributes: ['id'],
+      required: true,
+    }],
+  });
+  if (!membership) {
+    const error = new Error('Parent is not active in this school.');
+    error.status = 400;
+    throw error;
+  }
+  return parsedParentId;
+};
+
 exports.getAll = async (req, res) => {
   try {
     const activeSchoolIds = req.user.role === 'parent' ? await getActiveParentSchoolIds(req.user.id) : null;
@@ -42,11 +69,17 @@ exports.create = async (req, res) => {
     if (!admissionNumber) return res.status(400).json({ error: 'Admission number is required.' });
     const existing = await Student.findOne({ where: { schoolId: req.user.schoolId, admissionNumber: { [Op.iLike]: admissionNumber } } });
     if (existing) return res.status(409).json({ error: 'A student with this admission number already exists.' });
-    const student = await Student.create({ ...req.body, admissionNumber, schoolId: req.user.schoolId });
+    const parentId = await validateParentLink(req.body.parentId, req.user.schoolId);
+    const student = await Student.create({
+      ...req.body,
+      parentId,
+      admissionNumber,
+      schoolId: req.user.schoolId,
+    });
     res.status(201).json({ message: 'Student created.', student });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A student with this admission number already exists.' });
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 exports.update = async (req, res) => {
@@ -62,10 +95,13 @@ exports.update = async (req, res) => {
       });
       if (existing) return res.status(409).json({ error: 'A student with this admission number already exists.' });
     }
+    if (Object.prototype.hasOwnProperty.call(updates, 'parentId')) {
+      updates.parentId = await validateParentLink(updates.parentId, req.user.schoolId);
+    }
     await student.update(updates); res.json({ message: 'Student updated.', student });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A student with this admission number already exists.' });
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 exports.delete = async (req, res) => {
