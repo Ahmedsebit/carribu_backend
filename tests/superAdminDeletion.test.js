@@ -17,6 +17,7 @@ const {
   deleteSchool,
   deleteSchoolResource,
 } = require('../services/superAdminDeletion');
+const { endSchoolTrip } = require('../services/superAdminTrips');
 
 beforeAll(async () => {
   await setupTestDB();
@@ -49,7 +50,10 @@ describe('Super Admin permanent deletion', () => {
     ).rejects.toMatchObject({ status: 409 });
     await expect(Route.findByPk(route.id)).resolves.not.toBeNull();
 
-    await trip.update({ status: 'completed' });
+    const endedTrip = await endSchoolTrip(school.id, trip.id);
+    expect(endedTrip.status).toBe('completed');
+    expect(endedTrip.endedAt).not.toBeNull();
+    await expect(endSchoolTrip(school.id, trip.id)).rejects.toMatchObject({ status: 400 });
   });
 
   test('cannot delete a resource owned by another school', async () => {

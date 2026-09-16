@@ -249,6 +249,7 @@ router.delete(
   '/schools/:schoolId/resources/:type/:resourceId',
   c.permanentlyDeleteSchoolResource
 );
+router.put('/schools/:schoolId/trips/:tripId/end', c.endTrip);
 
 // --- School Admin Management ---
 
