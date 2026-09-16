@@ -1,7 +1,11 @@
 const crypto = require('crypto');
-const { School, User, Vehicle, Student, Route, Trip } = require('../models');
+const { School, User, ParentSchool, Vehicle, Student, Route, Trip } = require('../models');
 const { Op } = require('sequelize');
 const { sendPasswordResetEmail } = require('../utils/email');
+const {
+  deleteSchool,
+  deleteSchoolResource,
+} = require('../services/superAdminDeletion');
 
 const generatePassword = () => crypto.randomBytes(4).toString('hex');
 
@@ -119,6 +123,105 @@ exports.activateSchool = async (req, res) => {
     await school.update({ isActive: true });
     res.json({ message: 'School activated.', school });
   } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.getSchoolResources = async (req, res) => {
+  try {
+    const school = await School.findByPk(req.params.id, { attributes: ['id', 'name'] });
+    if (!school) return res.status(404).json({ error: 'School not found.' });
+
+    const [drivers, memberships, students, vehicles, routes, trips] = await Promise.all([
+      User.findAll({
+        where: { schoolId: school.id, role: 'driver' },
+        attributes: ['id', 'firstName', 'lastName', 'email', 'phone', 'isActive'],
+        order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+      }),
+      ParentSchool.findAll({
+        where: { schoolId: school.id },
+        attributes: ['isActive'],
+        include: [{
+          model: User,
+          as: 'parent',
+          attributes: ['id', 'firstName', 'lastName', 'email', 'phone', 'isActive'],
+          required: true,
+        }],
+      }),
+      Student.findAll({
+        where: { schoolId: school.id },
+        attributes: ['id', 'parentId', 'admissionNumber', 'firstName', 'lastName', 'grade', 'isActive'],
+        order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+      }),
+      Vehicle.findAll({
+        where: { schoolId: school.id },
+        attributes: ['id', 'plateNumber', 'make', 'model', 'status'],
+        order: [['plateNumber', 'ASC']],
+      }),
+      Route.findAll({
+        where: { schoolId: school.id },
+        attributes: ['id', 'name', 'type', 'driverId', 'vehicleId', 'isActive'],
+        order: [['name', 'ASC']],
+      }),
+      Trip.findAll({
+        attributes: ['id', 'routeId', 'driverId', 'vehicleId', 'status', 'type', 'scheduledDate'],
+        include: [{
+          model: Route,
+          as: 'route',
+          where: { schoolId: school.id },
+          attributes: ['id', 'name'],
+          required: true,
+        }],
+        order: [['scheduled_date', 'DESC'], ['id', 'DESC']],
+      }),
+    ]);
+
+    const childCounts = students.reduce((counts, student) => {
+      if (student.parentId) counts[student.parentId] = (counts[student.parentId] || 0) + 1;
+      return counts;
+    }, {});
+
+    res.json({
+      school,
+      resources: {
+        drivers,
+        parents: memberships.map(membership => ({
+          ...membership.parent.toJSON(),
+          schoolAccessActive: membership.isActive,
+          childCount: childCounts[membership.parent.id] || 0,
+        })),
+        students,
+        vehicles,
+        routes,
+        trips,
+      },
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.permanentlyDeleteSchool = async (req, res) => {
+  try {
+    const result = await deleteSchool(req.params.id, req.body.confirmation);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+};
+
+exports.permanentlyDeleteSchoolResource = async (req, res) => {
+  try {
+    const allowedTypes = ['driver', 'parent', 'student', 'vehicle', 'route', 'trip'];
+    if (!allowedTypes.includes(req.params.type)) {
+      return res.status(400).json({ error: 'Unsupported resource type.' });
+    }
+    const result = await deleteSchoolResource(
+      req.params.schoolId,
+      req.params.type,
+      req.params.resourceId,
+      req.body.confirmation
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 };
 
 // --- School Admin Management ---
