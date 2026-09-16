@@ -95,7 +95,7 @@ describe('Super Admin permanent deletion', () => {
       }),
     ]);
 
-    await deleteSchoolResource(school.id, 'trip', trip.id, `Trip #${trip.id}`);
+    await deleteSchoolResource(school.id, 'trip', trip.id, `  Trip   #${trip.id}  `);
     await expect(Trip.findByPk(trip.id)).resolves.toBeNull();
     await expect(Message.count({ where: { tripId: trip.id } })).resolves.toBe(0);
     await expect(BusLocation.count({ where: { tripId: trip.id } })).resolves.toBe(0);

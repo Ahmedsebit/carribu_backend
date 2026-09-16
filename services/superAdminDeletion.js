@@ -27,8 +27,10 @@ const resourceLabels = {
   trip: resource => `Trip #${resource.id}`,
 };
 
+const normalizeConfirmation = value => String(value || '').trim().replace(/\s+/g, ' ');
+
 const requireConfirmation = (confirmation, expected) => {
-  if (String(confirmation || '').trim() !== expected) {
+  if (normalizeConfirmation(confirmation) !== normalizeConfirmation(expected)) {
     const error = new Error(`Type "${expected}" to confirm permanent deletion.`);
     error.status = 400;
     throw error;
