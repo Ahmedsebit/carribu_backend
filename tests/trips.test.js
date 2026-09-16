@@ -50,6 +50,31 @@ describe('Trip Lifecycle', () => {
     tripId = res.body.trip.id;
   });
 
+  test('POST /api/trips - rejects a second pickup for the same student and day', async () => {
+    const { route } = getTestData();
+    const today = new Date().toISOString().split('T')[0];
+
+    const res = await request(app)
+      .post('/api/trips')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        routeId: route.id,
+        type: 'morning_pickup',
+        scheduledDate: today,
+        scheduledTime: '09:00',
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already ha(?:s|ve) a pickup trip/i);
+    expect(res.body.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        studentId: getTestData().student1.id,
+        tripId,
+        scheduledDate: today,
+      }),
+    ]));
+  });
+
   test('POST /api/trips - creates daily, weekday, and selected-day recurring trips', async () => {
     const { route } = getTestData();
     const schedules = [
@@ -66,9 +91,9 @@ describe('Trip Lifecycle', () => {
         expectedCount: 5,
       },
       {
-        scheduledDate: '2027-01-04',
+        scheduledDate: '2027-01-18',
         scheduledTime: '10:00',
-        recurrence: { frequency: 'weekly', endDate: '2027-01-17', weekdays: [1, 3] },
+        recurrence: { frequency: 'weekly', endDate: '2027-01-31', weekdays: [1, 3] },
         expectedCount: 4,
       },
     ];
@@ -116,6 +141,19 @@ describe('Trip Lifecycle', () => {
     expect(res.body.trips.length).toBeGreaterThan(0);
   });
 
+  test('GET /api/trips - filters trip history by student', async () => {
+    const { student1 } = getTestData();
+    const res = await request(app)
+      .get(`/api/trips?studentId=${student1.id}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.trips.length).toBeGreaterThan(0);
+    expect(res.body.trips.every(trip =>
+      trip.route.students.length === 1 && trip.route.students[0].id === student1.id
+    )).toBe(true);
+  });
+
   test('GET /api/driver/my-trips - driver can see their trips', async () => {
     const res = await request(app)
       .get('/api/driver/my-trips')
@@ -142,7 +180,7 @@ describe('Trip Lifecycle', () => {
     const created = await request(app)
       .post('/api/trips')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ routeId: route.id, type: 'morning_pickup', scheduledDate: today });
+      .send({ routeId: route.id, type: 'afternoon_dropoff', scheduledDate: today });
 
     expect(created.status).toBe(201);
     conflictingTripId = created.body.trip.id;

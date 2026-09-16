@@ -1,6 +1,7 @@
 const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('../models');
 const { Op } = require('sequelize');
 const { checkDelayedTrips, checkMissedTrips } = require('../services/tripReminders');
+const { sortStudentsForTrip } = require('../services/routeOrdering');
 
 // Summarize a single student's pickup timeline from a set of trip logs.
 // Returns the key event timestamps plus the wait between the bus arriving
@@ -54,21 +55,21 @@ exports.getMyTrips = async (req, res) => {
       : { [Op.or]: [{ scheduledDate: { [Op.gte]: today } }, { status: 'in_progress' }] };
     const where = { [Op.and]: [mine, dateWhere] };
     const trips = await Trip.findAll({ where, subQuery: false, include: [
-      { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
+      { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ], order: [['scheduled_date','ASC'],['created_at','ASC']] });
     const result = trips.map(trip => {
       const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
-      students.sort((a,b) => (a.RouteStudent?.stopOrder||0)-(b.RouteStudent?.stopOrder||0));
-      t.pickupList = students.map((s,idx) => {
+      const orderedStudents = sortStudentsForTrip(students, t.type);
+      t.pickupList = orderedStudents.map((s,idx) => {
         const sl = logs.filter(l => l.studentId === s.id);
-        let status = 'pending';
+        let status = t.type === 'afternoon_dropoff' ? 'on_bus' : 'pending';
         if (sl.find(l => l.action === 'absent')) status = 'absent';
         else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
         else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
         else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
-        return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.pickupAddress, dropoffLat: s.parent?.pickupLat, dropoffLng: s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
+        return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress || s.parent?.pickupAddress, dropoffLat: s.parent?.dropoffLat || s.parent?.pickupLat, dropoffLng: s.parent?.dropoffLng || s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
       });
       t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
       return t;
@@ -86,7 +87,7 @@ exports.getTripHistory = async (req, res) => {
     ], order: [['scheduled_date','DESC'],['started_at','DESC']] });
     const result = trips.map(trip => {
       const t = trip.toJSON();
-      const students = (t.route?.students || []).sort((a,b) => (a.RouteStudent?.stopOrder||0)-(b.RouteStudent?.stopOrder||0));
+      const students = sortStudentsForTrip(t.route?.students, t.type);
       const logs = t.logs || [];
       const pickupList = students.map((s,idx) => { const sum = summarizeStudent(s.id, logs); return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, ...sum }; });
       const stats = { total: pickupList.length, pickedUp: pickupList.filter(p => p.status==='on_bus'||p.status==='dropped_off').length, absent: pickupList.filter(p => p.status==='absent').length };
@@ -110,21 +111,21 @@ exports.getActiveTrip = async (req, res) => {
       ],
       status: 'in_progress',
     }, include: [
-      { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng'] }] }] },
+      { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ]});
     if (!trip) return res.json({ activeTrip: null, message: 'No active trip.' });
     const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
-    students.sort((a,b) => (a.RouteStudent?.stopOrder||0)-(b.RouteStudent?.stopOrder||0));
-    t.pickupList = students.map((s,idx) => {
+    const orderedStudents = sortStudentsForTrip(students, t.type);
+    t.pickupList = orderedStudents.map((s,idx) => {
       const sl = logs.filter(l => l.studentId === s.id);
-      let status = 'pending';
+      let status = t.type === 'afternoon_dropoff' ? 'on_bus' : 'pending';
       if (sl.find(l => l.action === 'absent')) status = 'absent';
       else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
       else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
       else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
-      return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.pickupAddress, dropoffLat: s.parent?.pickupLat, dropoffLng: s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
+      return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress || s.parent?.pickupAddress, dropoffLat: s.parent?.dropoffLat || s.parent?.pickupLat, dropoffLng: s.parent?.dropoffLng || s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
     });
     t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
     t.stats = { total: t.pickupList.length, onBus: t.pickupList.filter(s => s.status==='on_bus').length, droppedOff: t.pickupList.filter(s => s.status==='dropped_off').length, absent: t.pickupList.filter(s => s.status==='absent').length, pending: t.pickupList.filter(s => s.status==='pending').length, arrived: t.pickupList.filter(s => s.status==='arrived').length };

@@ -249,7 +249,7 @@ router.put('/profile', authenticate, authController.updateProfile);
  * @swagger
  * /api/auth/push-token:
  *   put:
- *     summary: Save the current user's Expo push token for tray notifications
+ *     summary: Save the current user's Expo or FCM push token for tray notifications
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -261,6 +261,11 @@ router.put('/profile', authenticate, authController.updateProfile);
  *               pushToken:
  *                 type: string
  *                 example: ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]
+ *                 nullable: true
+ *               provider:
+ *                 type: string
+ *                 enum: [expo, fcm]
+ *                 default: expo
  *     responses:
  *       200:
  *         description: Push token saved

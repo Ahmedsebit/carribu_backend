@@ -46,7 +46,7 @@ exports.activeTrips = async (req, res) => {
 
 exports.tripHistory = async (req, res) => {
   try {
-    const { schoolId, startDate, endDate, limit = 50, offset = 0 } = req.query;
+    const { schoolId, studentId, startDate, endDate, limit = 50, offset = 0 } = req.query;
     const where = {};
     if (startDate || endDate) {
       where.scheduledDate = {};
@@ -54,31 +54,64 @@ exports.tripHistory = async (req, res) => {
       if (endDate) where.scheduledDate[Op.lte] = endDate;
     }
 
-    const include = [
-      { model: Route, as: 'route', attributes: ['id', 'name', 'school_id'], include: [{ model: School, as: 'school', attributes: ['id', 'name'] }] },
+    const parsedSchoolId = Number.parseInt(schoolId, 10);
+    const parsedStudentId = Number.parseInt(studentId, 10);
+    const hasSchoolFilter = Number.isInteger(parsedSchoolId) && parsedSchoolId > 0;
+    const hasStudentFilter = Number.isInteger(parsedStudentId) && parsedStudentId > 0;
+    const makeInclude = () => [
+      {
+        model: Route,
+        as: 'route',
+        attributes: ['id', 'name', 'school_id'],
+        required: hasSchoolFilter || hasStudentFilter,
+        where: hasSchoolFilter ? { schoolId: parsedSchoolId } : undefined,
+        include: [
+          { model: School, as: 'school', attributes: ['id', 'name'] },
+          {
+            model: Student,
+            as: 'students',
+            attributes: ['id', 'admissionNumber', 'firstName', 'lastName'],
+            where: hasStudentFilter ? { id: parsedStudentId } : undefined,
+            required: hasStudentFilter,
+            through: { attributes: [] },
+          },
+        ],
+      },
       { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName'] },
     ];
 
-    if (schoolId) {
-      include[0].where = { school_id: schoolId };
-    }
-
     const { count, rows: trips } = await Trip.findAndCountAll({
       where,
-      include,
+      include: makeInclude(),
+      distinct: true,
       order: [['scheduledDate', 'DESC'], ['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: parseInt(offset),
     });
 
-    const statusCounts = await Trip.findAll({
+    const matchingTrips = await Trip.findAll({
       where,
-      attributes: ['status', [fn('COUNT', col('id')), 'count']],
-      group: ['status'],
-      raw: true,
+      attributes: ['id', 'status'],
+      include: makeInclude(),
     });
+    const counts = matchingTrips.reduce((result, trip) => {
+      result[trip.status] = (result[trip.status] || 0) + 1;
+      return result;
+    }, {});
+    const statusCounts = Object.entries(counts).map(([status, statusCount]) => ({
+      status,
+      count: String(statusCount),
+    }));
 
-    res.json({ trips, total: count, statusBreakdown: statusCounts });
+    const students = hasSchoolFilter
+      ? await Student.findAll({
+          where: { schoolId: parsedSchoolId, isActive: true },
+          attributes: ['id', 'admissionNumber', 'firstName', 'lastName'],
+          order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+        })
+      : [];
+
+    res.json({ trips, total: count, statusBreakdown: statusCounts, students });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 

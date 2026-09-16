@@ -241,6 +241,10 @@ router.post('/schools/:id/activate', c.activateSchool);
  *         name: schoolId
  *         schema:
  *           type: integer
+ *       - in: query
+ *         name: studentId
+ *         schema:
+ *           type: integer
  *         description: Filter admins by school
  *     responses:
  *       200:

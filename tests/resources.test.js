@@ -5,7 +5,7 @@
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
-const { User, ParentSchool, Student } = require('../models');
+const { User, ParentSchool, Student, Trip } = require('../models');
 
 let adminToken, driverToken, parentToken;
 
@@ -120,7 +120,7 @@ describe('Driver and parent identity uniqueness', () => {
     expect(res.body.trips).toBeInstanceOf(Array);
   });
 
-  test('DELETE /api/drivers/:id permanently deletes a driver from this school', async () => {
+  test('DELETE /api/drivers/:id deactivates a driver from this school', async () => {
     const { school } = getTestData();
     const driver = await User.create({
       schoolId: school.id,
@@ -137,8 +137,10 @@ describe('Driver and parent identity uniqueness', () => {
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.message).toMatch(/deleted/i);
-    await expect(User.findByPk(driver.id)).resolves.toBeNull();
+    expect(res.body.message).toMatch(/deactivated/i);
+    const deactivatedDriver = await User.findByPk(driver.id);
+    expect(deactivatedDriver).not.toBeNull();
+    expect(deactivatedDriver.isActive).toBe(false);
   });
 
   test('POST /api/drivers - allows email and phone used by another school', async () => {
@@ -385,6 +387,55 @@ describe('Routes API', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.route.name).toBe('New Test Route');
+  });
+
+  test('route students are ordered nearest-first and afternoon trips reverse the order', async () => {
+    const { school, vehicle, driver, student1, student2 } = getTestData();
+    const res = await request(app)
+      .post('/api/routes')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Distance Ordered Route',
+        vehicleId: vehicle.id,
+        driverId: driver.id,
+        type: 'both',
+        studentIds: [student1.id, student2.id],
+        outboundWaypoints: [{
+          lat: -1.2888,
+          lng: 36.7845,
+          label: 'Route start',
+        }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.route.students.map(student => student.id)).toEqual([
+      student2.id,
+      student1.id,
+    ]);
+    expect(res.body.route.students.map(student => student.RouteStudent.stopOrder)).toEqual([1, 2]);
+
+    const scheduledDate = '2027-06-01';
+    const trip = await Trip.create({
+      routeId: res.body.route.id,
+      driverId: driver.id,
+      vehicleId: vehicle.id,
+      type: 'afternoon_dropoff',
+      scheduledDate,
+      status: 'scheduled',
+    });
+    const driverTrips = await request(app)
+      .get(`/api/driver/my-trips?date=${scheduledDate}`)
+      .set('Authorization', `Bearer ${driverToken}`);
+
+    expect(driverTrips.status).toBe(200);
+    const afternoon = driverTrips.body.trips.find(item => item.id === trip.id);
+    expect(afternoon.pickupList.map(student => student.studentId)).toEqual([
+      student1.id,
+      student2.id,
+    ]);
+    expect(afternoon.pickupList.every(student => student.status === 'on_bus')).toBe(true);
+    expect(afternoon.route.id).toBe(res.body.route.id);
+    expect(school.id).toBeDefined();
   });
 
   test('POST /api/routes/suggest-students - suggests students near waypoints', async () => {

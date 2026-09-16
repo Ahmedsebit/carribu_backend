@@ -174,12 +174,15 @@ exports.getMyChildBus = async (req, res) => {
                 const lng = isMorning ? s.parent.pickupLng : s.parent.dropoffLng;
                 return lat && lng;
               })
-              .sort((a, b) => (a.RouteStudent.stopOrder || 0) - (b.RouteStudent.stopOrder || 0))
-              .map(s => {
+              .sort((a, b) => {
+                const direction = isMorning ? 1 : -1;
+                return direction * ((a.RouteStudent.stopOrder || 0) - (b.RouteStudent.stopOrder || 0));
+              })
+              .map((s, index) => {
                 const lat = parseFloat(isMorning ? s.parent.pickupLat : s.parent.dropoffLat);
                 const lng = parseFloat(isMorning ? s.parent.pickupLng : s.parent.dropoffLng);
                 const isMyChild = myChildIds.has(s.id);
-                const stop = { stopOrder: s.RouteStudent.stopOrder, lat, lng, isMyChild };
+                const stop = { stopOrder: index + 1, lat, lng, isMyChild };
                 if (isMyChild) { stop.studentId = s.id; stop.firstName = s.firstName; }
                 return stop;
               });

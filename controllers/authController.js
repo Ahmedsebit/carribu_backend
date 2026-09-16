@@ -162,11 +162,18 @@ exports.updateProfile = async (req, res) => {
 
 exports.savePushToken = async (req, res) => {
   try {
-    const { pushToken } = req.body;
+    const { pushToken, provider = 'expo' } = req.body;
+    if (!['expo', 'fcm'].includes(provider)) {
+      return res.status(400).json({ error: 'provider must be either expo or fcm.' });
+    }
+    if (pushToken !== null && pushToken !== undefined && typeof pushToken !== 'string') {
+      return res.status(400).json({ error: 'pushToken must be a string or null.' });
+    }
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
-    user.expoPushToken = pushToken || null;
+    const field = provider === 'fcm' ? 'fcmPushToken' : 'expoPushToken';
+    user[field] = pushToken?.trim() || null;
     await user.save();
-    res.json({ message: 'Push token saved.' });
+    res.json({ message: `${provider.toUpperCase()} push token saved.` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

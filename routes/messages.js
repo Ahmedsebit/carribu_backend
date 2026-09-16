@@ -53,6 +53,8 @@ router.get('/unread-count', c.getUnreadCount);
  *         description: Notifications list
  */
 router.get('/notifications', c.getNotifications);
+router.delete('/notifications', c.clearNotifications);
+router.delete('/notifications/:id', c.deleteNotification);
 
 /**
  * @swagger
@@ -83,6 +85,7 @@ router.get('/my-drivers', c.getMyDrivers);
  *         description: Message thread
  */
 router.get('/thread/:partnerId', c.getThread);
+router.delete('/thread/:partnerId', c.clearThread);
 
 /**
  * @swagger
@@ -169,5 +172,6 @@ router.post('/', c.send);
  *         description: Absence reported
  */
 router.post('/absence', c.reportAbsence);
+router.delete('/:id', c.deleteMessage);
 
 module.exports = router;

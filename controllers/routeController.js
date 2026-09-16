@@ -1,5 +1,19 @@
 const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip, TripLog } = require('../models');
 const { Op } = require('sequelize');
+const {
+  getRouteStart,
+  replaceRouteStudentOrder,
+} = require('../services/routeOrdering');
+
+const orderRouteStudents = route => {
+  const value = route.toJSON();
+  value.students = (value.students || []).sort(
+    (left, right) =>
+      (left.RouteStudent?.stopOrder || 0) - (right.RouteStudent?.stopOrder || 0)
+  );
+  return value;
+};
+
 exports.getAll = async (req, res) => {
   try {
     const routes = await Route.findAll({ where: { schoolId: req.user.schoolId }, include: [
@@ -8,7 +22,7 @@ exports.getAll = async (req, res) => {
       { model: Student, as: 'students', attributes: ['id','firstName','lastName','grade'], through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ], order: [['name','ASC']] });
-    res.json({ routes, total: routes.length });
+    res.json({ routes: routes.map(orderRouteStudents), total: routes.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getById = async (req, res) => {
@@ -20,7 +34,7 @@ exports.getById = async (req, res) => {
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
     if (!route) return res.status(404).json({ error: 'Route not found.' });
-    res.json({ route });
+    res.json({ route: orderRouteStudents(route) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -148,7 +162,13 @@ exports.create = async (req, res) => {
     const route = await Route.create({ ...routeData, schoolId: req.user.schoolId });
 
     if (studentIds && studentIds.length > 0) {
-      await RouteStudent.bulkCreate(studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
+      const startPoint = outboundWaypoints?.[0] || null;
+      await replaceRouteStudentOrder(
+        route.id,
+        studentIds,
+        startPoint,
+        req.user.schoolId
+      );
     }
 
     // Save outbound waypoints (A → B)
@@ -173,7 +193,7 @@ exports.create = async (req, res) => {
       { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
-    res.status(201).json({ message: 'Route created.', route: full });
+    res.status(201).json({ message: 'Route created.', route: orderRouteStudents(full) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.update = async (req, res) => {
@@ -197,11 +217,6 @@ exports.update = async (req, res) => {
       );
     }
 
-    if (studentIds) {
-      await RouteStudent.destroy({ where: { routeId: route.id } });
-      await RouteStudent.bulkCreate(studentIds.map((sid, i) => ({ routeId: route.id, studentId: sid, stopOrder: i + 1 })));
-    }
-
     // Replace outbound waypoints if provided
     if (outboundWaypoints) {
       await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'outbound' } });
@@ -211,6 +226,27 @@ exports.update = async (req, res) => {
           lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
         })));
       }
+    }
+
+    if (studentIds) {
+      const startPoint = outboundWaypoints?.[0] || await getRouteStart(route.id);
+      await replaceRouteStudentOrder(
+        route.id,
+        studentIds,
+        startPoint,
+        req.user.schoolId
+      );
+    } else if (outboundWaypoints) {
+      const assignments = await RouteStudent.findAll({
+        where: { routeId: route.id },
+        order: [['stopOrder', 'ASC']],
+      });
+      await replaceRouteStudentOrder(
+        route.id,
+        assignments.map(assignment => assignment.studentId),
+        outboundWaypoints[0] || null,
+        req.user.schoolId
+      );
     }
 
     // Replace return waypoints if provided
@@ -230,7 +266,7 @@ exports.update = async (req, res) => {
       { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
-    res.json({ message: 'Route updated.', route: full });
+    res.json({ message: 'Route updated.', route: orderRouteStudents(full) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.delete = async (req, res) => {

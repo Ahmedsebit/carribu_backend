@@ -1,5 +1,9 @@
 const { Student, User, School, Route, RouteStudent } = require('../models');
 const { Op } = require('sequelize');
+const {
+  getRouteStart,
+  replaceRouteStudentOrder,
+} = require('../services/routeOrdering');
 exports.getAll = async (req, res) => {
   try {
     const where = req.user.role === 'parent' ? { parentId: req.user.id } : { schoolId: req.user.schoolId };
@@ -68,12 +72,25 @@ exports.delete = async (req, res) => {
 };
 exports.assignRoute = async (req, res) => {
   try {
-    const { routeId, stopOrder } = req.body;
+    const { routeId } = req.body;
     const student = await Student.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
     if (!student) return res.status(404).json({ error: 'Student not found.' });
     const route = await Route.findOne({ where: { id: routeId, schoolId: req.user.schoolId } });
     if (!route) return res.status(404).json({ error: 'Route not found.' });
-    await RouteStudent.findOrCreate({ where: { routeId, studentId: student.id }, defaults: { stopOrder: stopOrder || 0 } });
+    await RouteStudent.findOrCreate({
+      where: { routeId, studentId: student.id },
+      defaults: { stopOrder: 0 },
+    });
+    const assignments = await RouteStudent.findAll({
+      where: { routeId },
+      order: [['stopOrder', 'ASC']],
+    });
+    await replaceRouteStudentOrder(
+      routeId,
+      assignments.map(assignment => assignment.studentId),
+      await getRouteStart(routeId),
+      req.user.schoolId
+    );
     res.json({ message: 'Student assigned to route.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

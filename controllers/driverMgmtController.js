@@ -266,11 +266,29 @@ exports.deleteDriver = async (req, res) => {
         };
       }
 
-      await driver.destroy({ transaction });
+      await Route.update(
+        { driverId: null },
+        { where: { driverId: driver.id }, transaction }
+      );
+      await Trip.update(
+        { driverId: null },
+        {
+          where: {
+            driverId: driver.id,
+            status: { [Op.in]: ['scheduled', 'delayed'] },
+          },
+          transaction,
+        }
+      );
+      await driver.update({
+        isActive: false,
+        expoPushToken: null,
+        fcmPushToken: null,
+      }, { transaction });
       return { status: 200 };
     });
 
     if (result.error) return res.status(result.status).json({ error: result.error });
-    res.json({ message: 'Driver deleted.' });
+    res.json({ message: 'Driver deactivated.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

@@ -66,6 +66,14 @@ cp .env.example .env
 | `DB_PASSWORD` | Database password | `postgres` |
 | `JWT_SECRET` | Secret key for JWT signing | — |
 | `JWT_EXPIRES_IN` | Token expiry duration | `7d` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery | — |
+
+Expo push delivery works without Firebase configuration. To enable native
+Android notifications, set `FIREBASE_SERVICE_ACCOUNT_JSON` as a secret in the
+deployment environment. Never commit the service-account file or JSON value.
+The authenticated `PUT /api/auth/push-token` endpoint accepts
+`provider: "expo"` (the backward-compatible default) or `provider: "fcm"` and
+stores the tokens independently.
 
 ### 4. Create the database
 
