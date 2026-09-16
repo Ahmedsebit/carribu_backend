@@ -89,15 +89,18 @@ exports.createParent = async (req, res) => {
         where: { parentId: existing.id, schoolId: req.user.schoolId },
         defaults: { isActive: true },
       });
-      if (!created && membership.isActive) {
+      if (!created && membership.isActive && existing.isActive) {
         return res.status(409).json({
           error: 'A user with this email or phone number already belongs to this school',
         });
       }
       if (!created) await membership.update({ isActive: true });
+      if (!existing.isActive) await existing.update({ isActive: true });
       return res.status(200).json({
         parent: existing,
-        message: created ? 'Existing parent added to this school.' : 'Parent access to this school restored.',
+        message: created
+          ? 'Existing parent added to this school.'
+          : 'Parent access to this school restored.',
       });
     }
 

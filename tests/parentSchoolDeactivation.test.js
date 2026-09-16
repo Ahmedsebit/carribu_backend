@@ -40,6 +40,63 @@ afterAll(async () => {
 });
 
 describe('Parent school deactivation', () => {
+  test('new and legacy inactive parents appear in the school parent list after being added', async () => {
+    const { school } = getTestData();
+    const newParentResponse = await request(app)
+      .post('/api/parents')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: 'new-listed-parent@test.com',
+        firstName: 'New',
+        lastName: 'Listed Parent',
+        phone: '+254711222333',
+      });
+    expect(newParentResponse.status).toBe(201);
+
+    const legacyParent = await User.create({
+      schoolId: null,
+      email: 'legacy-inactive-parent@test.com',
+      passwordHash: 'parent123',
+      firstName: 'Legacy',
+      lastName: 'Inactive Parent',
+      role: 'parent',
+      phone: '+254722333444',
+      isActive: false,
+    });
+    const restoredParentResponse = await request(app)
+      .post('/api/parents')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        email: legacyParent.email,
+        firstName: legacyParent.firstName,
+        lastName: legacyParent.lastName,
+        phone: legacyParent.phone,
+      });
+    expect(restoredParentResponse.status).toBe(200);
+
+    const listResponse = await request(app)
+      .get('/api/parents')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.parents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: newParentResponse.body.parent.id,
+        schoolAccessActive: true,
+      }),
+      expect.objectContaining({
+        id: legacyParent.id,
+        schoolAccessActive: true,
+      }),
+    ]));
+
+    const [restoredAccount, restoredMembership] = await Promise.all([
+      User.findByPk(legacyParent.id),
+      ParentSchool.findOne({ where: { parentId: legacyParent.id, schoolId: school.id } }),
+    ]);
+    expect(restoredAccount.isActive).toBe(true);
+    expect(restoredMembership.isActive).toBe(true);
+  });
+
   test('removes only one school while preserving the account and other school trips', async () => {
     const { school, parent, student1 } = getTestData();
     const otherSchool = await School.create({ name: 'Second Active School' });
