@@ -1,16 +1,29 @@
 const { Message, User, Trip, Route, Student, School, RouteStudent, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser } = require('../socket');
+
+const visibleToUser = userId => ({
+  [Op.or]: [
+    { senderId: userId, senderDeletedAt: null },
+    { receiverId: userId, receiverDeletedAt: null },
+  ],
+});
+
 exports.getConversations = async (req, res) => {
   try {
     const userId = req.user.id;
-    const where = { [Op.or]: [{ senderId: userId }, { receiverId: userId }] };
+    const where = visibleToUser(userId);
     if (req.user.role !== 'parent') where.schoolId = req.user.schoolId;
     const messages = await Message.findAll({ where, include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role','phone'] }, { model: User, as: 'receiver', attributes: ['id','firstName','lastName','role','phone'] }], order: [['created_at','DESC']] });
     const map = {};
     messages.forEach(msg => {
       const pid = msg.senderId === userId ? msg.receiverId : msg.senderId;
-      if (!map[pid]) { const p = msg.senderId === userId ? msg.receiver : msg.sender; map[pid] = { partnerId: pid, partnerName: `${p.firstName} ${p.lastName}`, partnerRole: p.role, partnerPhone: p.phone, lastMessage: msg.content, lastMessageTime: msg.createdAt, lastMessageType: msg.messageType, unreadCount: 0 }; }
+      const p = msg.senderId === userId ? msg.receiver : msg.sender;
+      // Older hard-deleted users leave messages with a null participant.
+      // They cannot form a usable thread, so omit them instead of failing the
+      // entire conversations response.
+      if (!pid || !p) return;
+      if (!map[pid]) { map[pid] = { partnerId: pid, partnerName: `${p.firstName} ${p.lastName}`, partnerRole: p.role, partnerPhone: p.phone, lastMessage: msg.content, lastMessageTime: msg.createdAt, lastMessageType: msg.messageType, unreadCount: 0 }; }
       if (msg.receiverId === userId && !msg.isRead) map[pid].unreadCount++;
     });
     res.json({ conversations: Object.values(map) });
@@ -19,7 +32,13 @@ exports.getConversations = async (req, res) => {
 exports.getThread = async (req, res) => {
   try {
     const userId = req.user.id; const partnerId = parseInt(req.params.partnerId);
-    const where = { [Op.or]: [{ senderId: userId, receiverId: partnerId }, { senderId: partnerId, receiverId: userId }] };
+    if (!Number.isInteger(partnerId)) return res.status(400).json({ error: 'A valid partnerId is required.' });
+    const where = {
+      [Op.or]: [
+        { senderId: userId, receiverId: partnerId, senderDeletedAt: null },
+        { senderId: partnerId, receiverId: userId, receiverDeletedAt: null },
+      ],
+    };
     if (req.user.role !== 'parent') where.schoolId = req.user.schoolId;
     const messages = await Message.findAll({ where, include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }], order: [['created_at','ASC']], limit: parseInt(req.query.limit) || 50 });
     await Message.update({ isRead: true }, { where: { senderId: partnerId, receiverId: userId, isRead: false } });
@@ -161,7 +180,7 @@ exports.reportAbsence = async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getUnreadCount = async (req, res) => {
-  try { const count = await Message.count({ where: { receiverId: req.user.id, isRead: false } }); res.json({ unreadCount: count }); }
+  try { const count = await Message.count({ where: { receiverId: req.user.id, receiverDeletedAt: null, isRead: false } }); res.json({ unreadCount: count }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getRouteParents = async (req, res) => {
@@ -198,11 +217,96 @@ exports.getMyDrivers = async (req, res) => {
 exports.getNotifications = async (req, res) => {
   try {
     const msgs = await Message.findAll({
-      where: { receiverId: req.user.id, messageType: { [Op.in]: ['alert', 'arrival', 'system'] } },
+      where: { receiverId: req.user.id, receiverDeletedAt: null, messageType: { [Op.in]: ['alert', 'arrival', 'system'] } },
       include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }],
       order: [['created_at', 'DESC']],
       limit: 50,
     });
-    res.json({ notifications: msgs });
+    const notifications = msgs.map(msg => {
+      const notification = msg.toJSON();
+      if (!notification.sender) {
+        notification.sender = { id: null, firstName: 'Deleted', lastName: 'user', role: null };
+      }
+      return notification;
+    });
+    res.json({ notifications });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.deleteMessage = async (req, res) => {
+  try {
+    const message = await Message.findOne({
+      where: {
+        id: req.params.id,
+        [Op.or]: [{ senderId: req.user.id }, { receiverId: req.user.id }],
+      },
+    });
+    if (!message) return res.status(404).json({ error: 'Message not found.' });
+
+    const deletedAt = new Date();
+    const updates = {};
+    if (message.senderId === req.user.id) updates.senderDeletedAt = deletedAt;
+    if (message.receiverId === req.user.id) updates.receiverDeletedAt = deletedAt;
+    await message.update(updates);
+
+    res.json({ message: 'Message removed from your account.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.clearThread = async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.partnerId, 10);
+    if (!Number.isInteger(partnerId)) return res.status(400).json({ error: 'A valid partnerId is required.' });
+    const deletedAt = new Date();
+
+    const [sentCount, receivedCount] = await sequelize.transaction(async transaction => Promise.all([
+      Message.update(
+        { senderDeletedAt: deletedAt },
+        { where: { senderId: req.user.id, receiverId: partnerId, senderDeletedAt: null }, transaction }
+      ),
+      Message.update(
+        { receiverDeletedAt: deletedAt },
+        { where: { senderId: partnerId, receiverId: req.user.id, receiverDeletedAt: null }, transaction }
+      ),
+    ]));
+
+    res.json({
+      message: 'Conversation cleared from your account.',
+      deletedCount: sentCount[0] + receivedCount[0],
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.deleteNotification = async (req, res) => {
+  try {
+    const [updated] = await Message.update(
+      { receiverDeletedAt: new Date() },
+      {
+        where: {
+          id: req.params.id,
+          receiverId: req.user.id,
+          receiverDeletedAt: null,
+          messageType: { [Op.in]: ['alert', 'arrival', 'system'] },
+        },
+      }
+    );
+    if (!updated) return res.status(404).json({ error: 'Notification not found.' });
+    res.json({ message: 'Notification removed.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.clearNotifications = async (req, res) => {
+  try {
+    const [deletedCount] = await Message.update(
+      { receiverDeletedAt: new Date() },
+      {
+        where: {
+          receiverId: req.user.id,
+          receiverDeletedAt: null,
+          messageType: { [Op.in]: ['alert', 'arrival', 'system'] },
+        },
+      }
+    );
+    res.json({ message: 'Notifications cleared.', deletedCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

@@ -116,7 +116,7 @@ router.put('/:id', c.updateDriver);
  * @swagger
  * /api/drivers/{id}:
  *   delete:
- *     summary: Delete a driver and clear their assignments
+ *     summary: Deactivate a driver and clear their active assignments
  *     tags: [Drivers]
  *     parameters:
  *       - in: path
@@ -126,7 +126,7 @@ router.put('/:id', c.updateDriver);
  *           type: integer
  *     responses:
  *       200:
- *         description: Driver deleted
+ *         description: Driver deactivated
  *       404:
  *         description: Driver not found
  *       409:

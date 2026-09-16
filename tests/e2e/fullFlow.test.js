@@ -207,6 +207,19 @@ describe('Full end-to-end: school setup -> live trip tracking + notifications', 
       .send({ pushToken: EXPO_TOKEN });
   });
 
+  test('Parent registers an FCM token without replacing the Expo token', async () => {
+    const fcmToken = 'native-fcm-registration-token';
+    const save = await auth(request(app).put('/api/auth/push-token'), parentToken)
+      .send({ pushToken: fcmToken, provider: 'fcm' });
+    expect(save.status).toBe(200);
+
+    const dbUser = await User.findByPk(parentId, {
+      attributes: ['expoPushToken', 'fcmPushToken'],
+    });
+    expect(dbUser.expoPushToken).toBe(EXPO_TOKEN);
+    expect(dbUser.fcmPushToken).toBe(fcmToken);
+  });
+
   test('Driver starts the trip: parent gets a live event AND a phone push', async () => {
     const parentSocket = await connectClient(parentToken);
     parentSocket.emit('track-trip', tripId);

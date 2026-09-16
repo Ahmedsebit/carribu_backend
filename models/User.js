@@ -17,6 +17,7 @@ const User = sequelize.define('User', {
   dropoffLat: { type: DataTypes.DECIMAL(10,7), field: 'dropoff_lat' },
   dropoffLng: { type: DataTypes.DECIMAL(10,7), field: 'dropoff_lng' },
   expoPushToken: { type: DataTypes.STRING(255), field: 'expo_push_token' },
+  fcmPushToken: { type: DataTypes.STRING(2048), field: 'fcm_push_token' },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
   mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
 }, {

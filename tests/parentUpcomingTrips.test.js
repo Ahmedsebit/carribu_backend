@@ -124,6 +124,36 @@ describe('GET /api/parent/upcoming-trips', () => {
     expect(res.body.trips[0].children[0].studentName).toBe('Child Two');
   });
 
+  test('filters upcoming trips by an owned student and school', async () => {
+    const { school, student1 } = getTestData();
+    const res = await request(app)
+      .get('/api/parent/upcoming-trips')
+      .query({ days: 14, schoolId: school.id, studentId: student1.id })
+      .set('Authorization', `Bearer ${parentToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.trips).toHaveLength(2);
+    expect(res.body.trips.every(trip =>
+      trip.school.id === school.id &&
+      trip.children.length === 1 &&
+      trip.children[0].studentId === student1.id
+    )).toBe(true);
+    expect(res.body.filters.students).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: student1.id, schoolId: school.id }),
+    ]));
+  });
+
+  test('cannot filter using another parent\'s student', async () => {
+    const { student2 } = getTestData();
+    const res = await request(app)
+      .get('/api/parent/upcoming-trips')
+      .query({ days: 14, studentId: student2.id })
+      .set('Authorization', `Bearer ${parentToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.trips).toHaveLength(0);
+  });
+
   test('completed trips are never returned as upcoming', async () => {
     const res = await request(app)
       .get('/api/parent/upcoming-trips')

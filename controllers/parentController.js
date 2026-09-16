@@ -193,6 +193,46 @@ const summarizeStudent = (studentId, logs) => {
   return { arrivedAt, pickedAt, droppedAt, absent, status, waitSeconds };
 };
 
+const getParentTripFilters = async (parentId, query) => {
+  const allChildren = await Student.findAll({
+    where: { parentId, isActive: true },
+    attributes: ['id', 'schoolId', 'admissionNumber', 'firstName', 'lastName', 'grade'],
+    include: [
+      { model: School, as: 'school', attributes: ['id', 'name'] },
+      { model: Route, as: 'routes', attributes: ['id', 'name'], through: { attributes: [] } },
+    ],
+    order: [['firstName', 'ASC'], ['lastName', 'ASC']],
+  });
+
+  const schoolId = Number.parseInt(query.schoolId, 10);
+  const studentId = Number.parseInt(query.studentId, 10);
+  const hasSchoolFilter = Number.isInteger(schoolId) && schoolId > 0;
+  const hasStudentFilter = Number.isInteger(studentId) && studentId > 0;
+  const children = allChildren.filter(child =>
+    (!hasSchoolFilter || child.schoolId === schoolId) &&
+    (!hasStudentFilter || child.id === studentId)
+  );
+  const schoolsById = new Map();
+  allChildren.forEach(child => {
+    if (child.school) schoolsById.set(child.school.id, child.school);
+  });
+
+  return {
+    children,
+    filters: {
+      schools: [...schoolsById.values()],
+      students: allChildren.map(child => ({
+        id: child.id,
+        schoolId: child.schoolId,
+        admissionNumber: child.admissionNumber,
+        firstName: child.firstName,
+        lastName: child.lastName,
+        grade: child.grade,
+      })),
+    },
+  };
+};
+
 // Self-service: completed trips (default last 30 days) that carried the
 // authenticated parent's children. Only the parent's own children are
 // exposed on each trip for privacy.
@@ -202,14 +242,11 @@ exports.getTripHistory = async (req, res) => {
     const since = new Date(); since.setDate(since.getDate() - days);
     const sinceStr = since.toISOString().split('T')[0];
 
-    const children = await Student.findAll({
-      where: { parentId: req.user.id },
-      include: [{ model: Route, as: 'routes', attributes: ['id', 'name'], through: { attributes: [] } }],
-    });
-    if (!children.length) return res.json({ trips: [], total: 0 });
+    const { children, filters } = await getParentTripFilters(req.user.id, req.query);
+    if (!children.length) return res.json({ trips: [], total: 0, filters });
 
     const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
-    if (!routeIds.length) return res.json({ trips: [], total: 0 });
+    if (!routeIds.length) return res.json({ trips: [], total: 0, filters });
 
     const trips = await Trip.findAll({
       where: { routeId: { [Op.in]: routeIds }, status: 'completed', scheduledDate: { [Op.gte]: sinceStr } },
@@ -247,7 +284,7 @@ exports.getTripHistory = async (req, res) => {
       };
     });
 
-    res.json({ trips: result, total: result.length });
+    res.json({ trips: result, total: result.length, filters });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -272,14 +309,11 @@ exports.getUpcomingTrips = async (req, res) => {
     const fromStr = toLocalDateStr(from);
     const toStr = toLocalDateStr(to);
 
-    const children = await Student.findAll({
-      where: { parentId: req.user.id },
-      include: [{ model: Route, as: 'routes', attributes: ['id', 'name'], through: { attributes: [] } }],
-    });
-    if (!children.length) return res.json({ trips: [], total: 0 });
+    const { children, filters } = await getParentTripFilters(req.user.id, req.query);
+    if (!children.length) return res.json({ trips: [], total: 0, filters });
 
     const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
-    if (!routeIds.length) return res.json({ trips: [], total: 0 });
+    if (!routeIds.length) return res.json({ trips: [], total: 0, filters });
 
     const trips = await Trip.findAll({
       where: {
@@ -316,6 +350,6 @@ exports.getUpcomingTrips = async (req, res) => {
       };
     });
 
-    res.json({ trips: result, total: result.length });
+    res.json({ trips: result, total: result.length, filters });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

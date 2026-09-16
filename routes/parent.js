@@ -25,6 +25,14 @@ router.use(schoolTenancy);
  *         schema:
  *           type: integer
  *           default: 30
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: studentId
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: List of completed trips with per-child pickup times
@@ -43,6 +51,14 @@ router.get('/trip-history', c.getTripHistory);
  *         schema:
  *           type: integer
  *           default: 1
+ *       - in: query
+ *         name: schoolId
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: studentId
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: List of upcoming scheduled/delayed trips
