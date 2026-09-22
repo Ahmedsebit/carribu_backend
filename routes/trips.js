@@ -66,6 +66,7 @@ router.get('/:id/details', authorize('school_admin', 'coordinator'), c.getDetail
  *                   frequency:
  *                     type: string
  *                     enum: [daily, weekdays, weekly]
+ *                     description: daily and the legacy weekdays value create trips Monday-Friday; weekly uses the selected weekdays.
  *                   endDate:
  *                     type: string
  *                     format: date

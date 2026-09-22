@@ -34,9 +34,9 @@ function buildRecurringDates(startDate, endDate, frequency, weekdays = []) {
   const dates = [];
   for (const date = new Date(startDate); date <= endDate; date.setUTCDate(date.getUTCDate() + 1)) {
     const day = date.getUTCDay();
+    const isWeekday = day >= 1 && day <= 5;
     if (
-      frequency === 'daily' ||
-      (frequency === 'weekdays' && day >= 1 && day <= 5) ||
+      ((frequency === 'daily' || frequency === 'weekdays') && isWeekday) ||
       (frequency === 'weekly' && selectedWeekdays.has(day))
     ) {
       dates.push(formatDateOnly(date));

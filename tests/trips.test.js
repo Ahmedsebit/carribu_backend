@@ -85,6 +85,13 @@ describe('Trip Lifecycle', () => {
         expectedCount: 3,
       },
       {
+        scheduledDate: '2027-02-05',
+        scheduledTime: '08:30',
+        recurrence: { frequency: 'daily', endDate: '2027-02-08' },
+        expectedCount: 2,
+        expectedDates: ['2027-02-05', '2027-02-08'],
+      },
+      {
         scheduledDate: '2027-01-04',
         scheduledTime: '09:00',
         recurrence: { frequency: 'weekdays', endDate: '2027-01-10' },
@@ -113,6 +120,9 @@ describe('Trip Lifecycle', () => {
       expect(res.status).toBe(201);
       expect(res.body.count).toBe(schedule.expectedCount);
       expect(res.body.trips).toHaveLength(schedule.expectedCount);
+      if (schedule.expectedDates) {
+        expect(res.body.trips.map(trip => trip.scheduledDate)).toEqual(schedule.expectedDates);
+      }
     }
 
     const duplicate = await request(app)
