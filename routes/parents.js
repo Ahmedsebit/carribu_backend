@@ -122,6 +122,34 @@ router.put('/:id', parentController.updateParent);
 
 /**
  * @swagger
+ * /api/parents/{id}/pickup-location/approve:
+ *   put:
+ *     summary: Approve a parent's pending pickup location
+ *     tags: [Parents]
+ *     responses:
+ *       200:
+ *         description: Pending pickup location approved and activated
+ *       409:
+ *         description: Parent has no pending pickup location
+ */
+router.put('/:id/pickup-location/approve', parentController.approvePickupLocation);
+
+/**
+ * @swagger
+ * /api/parents/{id}/pickup-location/reject:
+ *   put:
+ *     summary: Reject a parent's pending pickup location
+ *     tags: [Parents]
+ *     responses:
+ *       200:
+ *         description: Pending pickup location rejected
+ *       409:
+ *         description: Parent has no pending pickup location
+ */
+router.put('/:id/pickup-location/reject', parentController.rejectPickupLocation);
+
+/**
+ * @swagger
  * /api/parents/{id}/reactivate:
  *   put:
  *     summary: Reactivate a parent's access to this school

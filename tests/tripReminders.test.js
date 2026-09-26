@@ -35,14 +35,17 @@ beforeAll(async () => {
 });
 
 async function createTimedTrip(startInstantMs) {
-  const { route } = getTestData();
+  const { route, driver, vehicle } = getTestData();
   const { scheduledDate, scheduledTime } = wallClock(startInstantMs);
-  const res = await request(app)
-    .post('/api/trips')
-    .set('Authorization', `Bearer ${adminToken}`)
-    .send({ routeId: route.id, type: 'morning_pickup', scheduledDate, scheduledTime });
-  expect(res.status).toBe(201);
-  return res.body.trip.id;
+  const trip = await Trip.create({
+    routeId: route.id,
+    driverId: driver.id,
+    vehicleId: vehicle.id,
+    type: 'morning_pickup',
+    scheduledDate,
+    scheduledTime,
+  });
+  return trip.id;
 }
 
 describe('Trip acknowledgement lifecycle', () => {
@@ -66,7 +69,7 @@ describe('Trip acknowledgement lifecycle', () => {
   });
 
   test('a trip whose start window lapses is marked missed', async () => {
-    const id = await createTimedTrip(Date.now() - 45 * 60 * 1000); // 45 min ago (> 30m grace)
+    const id = await createTimedTrip(Date.now() - 25 * 60 * 1000);
     const missed = await checkMissedTrips(Date.now());
     expect(missed).toContain(id);
     const trip = await Trip.findByPk(id);
@@ -74,7 +77,7 @@ describe('Trip acknowledgement lifecycle', () => {
   });
 
   test('a missed trip cannot be acknowledged', async () => {
-    const id = await createTimedTrip(Date.now() - 45 * 60 * 1000);
+    const id = await createTimedTrip(Date.now() - 25 * 60 * 1000);
     await checkMissedTrips(Date.now());
     const res = await request(app)
       .put(`/api/trips/${id}/acknowledge`)
