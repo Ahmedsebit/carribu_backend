@@ -157,12 +157,69 @@ exports.updateParent = async (req, res) => {
       },
     });
     if (existing) return res.status(409).json({ error: 'A user with this phone number already exists' });
-    await parent.update({ firstName, lastName, phone: normalizedPhone, pickupAddress, pickupLat, pickupLng });
+    const updates = { firstName, lastName, phone: normalizedPhone, pickupAddress, pickupLat, pickupLng };
+    if ([pickupAddress, pickupLat, pickupLng].some(value => value !== undefined)) {
+      updates.pendingPickupAddress = null;
+      updates.pendingPickupLat = null;
+      updates.pendingPickupLng = null;
+      updates.pendingPickupRequestedAt = null;
+    }
+    await parent.update(updates);
     res.json({ parent: { ...parent.toJSON(), passwordHash: undefined } });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
     res.status(500).json({ error: err.message });
   }
+};
+
+const findSchoolParent = (parentId, schoolId) => User.findOne({
+  where: { id: parentId, role: 'parent', isActive: true },
+  include: [{
+    model: ParentSchool,
+    as: 'schoolMemberships',
+    where: { schoolId, isActive: true },
+    attributes: [],
+    required: true,
+  }],
+});
+
+exports.approvePickupLocation = async (req, res) => {
+  try {
+    const parent = await findSchoolParent(req.params.id, req.user.schoolId);
+    if (!parent) return res.status(404).json({ error: 'Parent not found' });
+    if (!parent.pendingPickupRequestedAt) {
+      return res.status(409).json({ error: 'This parent has no pending pickup location.' });
+    }
+
+    await parent.update({
+      pickupAddress: parent.pendingPickupAddress,
+      pickupLat: parent.pendingPickupLat,
+      pickupLng: parent.pendingPickupLng,
+      pendingPickupAddress: null,
+      pendingPickupLat: null,
+      pendingPickupLng: null,
+      pendingPickupRequestedAt: null,
+    });
+    res.json({ parent, message: 'Pickup location approved.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.rejectPickupLocation = async (req, res) => {
+  try {
+    const parent = await findSchoolParent(req.params.id, req.user.schoolId);
+    if (!parent) return res.status(404).json({ error: 'Parent not found' });
+    if (!parent.pendingPickupRequestedAt) {
+      return res.status(409).json({ error: 'This parent has no pending pickup location.' });
+    }
+
+    await parent.update({
+      pendingPickupAddress: null,
+      pendingPickupLat: null,
+      pendingPickupLng: null,
+      pendingPickupRequestedAt: null,
+    });
+    res.json({ parent, message: 'Pickup location change rejected.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
 exports.deleteParent = async (req, res) => {

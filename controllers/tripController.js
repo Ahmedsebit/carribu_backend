@@ -2,7 +2,13 @@ const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent, Bus
 const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser, notifyTrip } = require('../socket');
-const { checkDelayedTrips, checkMissedTrips, isStartWindowLapsed } = require('../services/tripReminders');
+const {
+  checkDelayedTrips,
+  checkMissedTrips,
+  START_WINDOW_MINUTES,
+  isStartWindowEarly,
+  isStartWindowLapsed,
+} = require('../services/tripReminders');
 const {
   getRouteStart,
   replaceRouteStudentOrder,
@@ -461,10 +467,13 @@ exports.startTrip = async (req, res) => {
     // A driver acknowledges (and thereby starts) a trip that is either still
     // scheduled or already flagged 'delayed' for running past its start time.
     if (!['scheduled', 'delayed'].includes(trip.status)) return res.status(400).json({ error: 'Trip already started or completed.' });
+    if (isStartWindowEarly(trip)) {
+      return res.status(400).json({ error: `This trip can only be started within ${START_WINDOW_MINUTES} minutes of its scheduled time.` });
+    }
     // Guard the race where the start window lapsed since the last sweep.
     if (isStartWindowLapsed(trip)) {
       await trip.update({ status: 'missed' });
-      return res.status(400).json({ error: 'This trip was missed — it was not started within the allowed time window.' });
+      return res.status(400).json({ error: `This trip was missed — it was not started within ${START_WINDOW_MINUTES} minutes after its scheduled time.` });
     }
     const currentStudents = [...(trip.route?.students || [])].sort(
       (left, right) =>

@@ -157,9 +157,27 @@ exports.updateProfile = async (req, res) => {
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
     if (phone !== undefined) user.phone = phone;
-    if (pickupAddress !== undefined) user.pickupAddress = pickupAddress;
-    if (pickupLat !== undefined) user.pickupLat = pickupLat;
-    if (pickupLng !== undefined) user.pickupLng = pickupLng;
+    const pickupLocationChanged = [pickupAddress, pickupLat, pickupLng].some(value => value !== undefined);
+    if (pickupLocationChanged) {
+      if (pickupAddress === undefined || pickupLat === undefined || pickupLng === undefined) {
+        return res.status(400).json({ error: 'pickupAddress, pickupLat, and pickupLng are all required.' });
+      }
+      const lat = Number(pickupLat);
+      const lng = Number(pickupLng);
+      if (!String(pickupAddress).trim() || !Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+        return res.status(400).json({ error: 'A valid pickup address, latitude, and longitude are required.' });
+      }
+      if (user.role === 'parent') {
+        user.pendingPickupAddress = String(pickupAddress).trim();
+        user.pendingPickupLat = lat;
+        user.pendingPickupLng = lng;
+        user.pendingPickupRequestedAt = new Date();
+      } else {
+        user.pickupAddress = String(pickupAddress).trim();
+        user.pickupLat = lat;
+        user.pickupLng = lng;
+      }
+    }
     if (dropoffAddress !== undefined) user.dropoffAddress = dropoffAddress;
     if (dropoffLat !== undefined) user.dropoffLat = dropoffLat;
     if (dropoffLng !== undefined) user.dropoffLng = dropoffLng;
@@ -172,7 +190,12 @@ exports.updateProfile = async (req, res) => {
       ],
     });
     hideInactivePrimarySchool(updated);
-    res.json({ user: updated, message: 'Profile updated.' });
+    res.json({
+      user: updated,
+      message: pickupLocationChanged && user.role === 'parent'
+        ? 'Pickup location submitted for school approval.'
+        : 'Profile updated.',
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 

@@ -211,7 +211,7 @@ router.put('/change-password', authenticate, authController.changePassword);
  * @swagger
  * /api/auth/profile:
  *   put:
- *     summary: Update current user profile (phone, pickup location)
+ *     summary: Update current user profile (parent pickup changes require school approval)
  *     tags: [Auth]
  *     requestBody:
  *       required: true

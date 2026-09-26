@@ -88,7 +88,7 @@ router.post('/', authorize('school_admin','coordinator','driver'), c.create);
  * @swagger
  * /api/trips/{id}/start:
  *   put:
- *     summary: Start a trip (sets status to in_progress)
+ *     summary: Start a trip within 20 minutes before or after its scheduled time
  *     tags: [Trips]
  *     parameters:
  *       - in: path
@@ -99,6 +99,8 @@ router.post('/', authorize('school_admin','coordinator','driver'), c.create);
  *     responses:
  *       200:
  *         description: Trip started
+ *       400:
+ *         description: Trip is outside its allowed start window or is not startable
  *       409:
  *         description: One or more students are already assigned to another active trip
  *       404:
@@ -110,7 +112,7 @@ router.put('/:id/start', authorize('school_admin','coordinator','driver'), c.sta
  * @swagger
  * /api/trips/{id}/acknowledge:
  *   put:
- *     summary: Driver acknowledges a trip, which officially starts it (sets status to in_progress)
+ *     summary: Driver acknowledges and starts a trip within its allowed start window
  *     tags: [Trips]
  *     parameters:
  *       - in: path

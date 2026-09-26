@@ -8,9 +8,8 @@ const LEAD_MINUTES = parseInt(process.env.TRIP_REMINDER_LEAD_MINUTES || '15', 10
 // time. Since the DB stores no timezone, interpret them at this UTC offset
 // (hours). Defaults to +3 (East Africa Time). Override with SCHOOL_UTC_OFFSET_HOURS.
 const OFFSET_HOURS = parseFloat(process.env.SCHOOL_UTC_OFFSET_HOURS || '3');
-// How long after the scheduled start a driver may still start the trip before
-// it is automatically marked 'missed'. Defaults to 30 minutes.
-const START_GRACE_MINUTES = parseInt(process.env.TRIP_START_GRACE_MINUTES || '30', 10);
+// How many minutes before or after the scheduled time a trip may be started.
+const START_WINDOW_MINUTES = parseInt(process.env.TRIP_START_WINDOW_MINUTES || '20', 10);
 const POLL_MS = 60 * 1000;
 
 // Absolute UTC millisecond instant for a trip's scheduled start, or null if the
@@ -65,7 +64,13 @@ async function checkReminders(now = Date.now()) {
 function isStartWindowLapsed(trip, now = Date.now()) {
   const startMs = tripStartMs(trip);
   if (startMs == null) return false;
-  return now > startMs + START_GRACE_MINUTES * 60 * 1000;
+  return now > startMs + START_WINDOW_MINUTES * 60 * 1000;
+}
+
+function isStartWindowEarly(trip, now = Date.now()) {
+  const startMs = tripStartMs(trip);
+  if (startMs == null) return false;
+  return now < startMs - START_WINDOW_MINUTES * 60 * 1000;
 }
 
 // Mark scheduled trips as 'delayed' once their scheduled start time has passed
@@ -157,11 +162,21 @@ function startTripReminderScheduler() {
   setTimeout(() => checkReminders().catch(() => {}), 5000);
   setTimeout(() => checkDelayedTrips().catch(() => {}), 5000);
   setTimeout(() => checkMissedTrips().catch(() => {}), 5000);
-  console.log(`⏰ Trip reminder scheduler started (lead ${LEAD_MINUTES}m, grace ${START_GRACE_MINUTES}m, offset +${OFFSET_HOURS}h).`);
+  console.log(`⏰ Trip reminder scheduler started (lead ${LEAD_MINUTES}m, start window ±${START_WINDOW_MINUTES}m, offset +${OFFSET_HOURS}h).`);
 }
 
 function stopTripReminderScheduler() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-module.exports = { startTripReminderScheduler, stopTripReminderScheduler, checkReminders, checkDelayedTrips, checkMissedTrips, isStartWindowLapsed, tripStartMs };
+module.exports = {
+  startTripReminderScheduler,
+  stopTripReminderScheduler,
+  checkReminders,
+  checkDelayedTrips,
+  checkMissedTrips,
+  START_WINDOW_MINUTES,
+  isStartWindowEarly,
+  isStartWindowLapsed,
+  tripStartMs,
+};
