@@ -67,6 +67,7 @@ cp .env.example .env
 | `JWT_SECRET` | Secret key for JWT signing | — |
 | `JWT_EXPIRES_IN` | Token expiry duration | `7d` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery | — |
+| `TRACKER_WEBHOOK_TOKEN` | Shared secret for Traccar position/event forwarding | — |
 
 Expo push delivery works without Firebase configuration. To enable native
 Android notifications, set `FIREBASE_SERVICE_ACCOUNT_JSON` as a secret in the
@@ -189,6 +190,36 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 | * | `/api/driver` | Driver-specific actions |
 | * | `/api/drivers` | Driver management |
 | * | `/api/parents` | Parent-specific actions |
+| POST | `/tracker/position` | Receive a Traccar JSON position |
+| POST | `/tracker/event` | Receive a Traccar JSON event |
+
+## Traccar GPS integration
+
+The Traccar endpoints require this header:
+
+```http
+Authorization: Bearer <TRACKER_WEBHOOK_TOKEN>
+```
+
+Set a long random `TRACKER_WEBHOOK_TOKEN` in the backend Railway service. Set
+the same value on the Traccar service through `FORWARD_HEADER` and
+`EVENT_FORWARD_HEADER`.
+
+Assign the tracker IMEI to its Carribu vehicle before expecting positions:
+
+```http
+PUT /api/vehicles/{vehicleId}
+Authorization: Bearer <admin JWT>
+Content-Type: application/json
+
+{"trackerUniqueId":"123456789012345"}
+```
+
+Positions are attached to the mapped vehicle's current `in_progress` trip and
+feed the existing live map, ETA, proximity notifications, and Socket.IO
+updates. Unknown devices, invalid fixes, and positions received with no active
+trip are acknowledged but ignored so Traccar does not retry them indefinitely.
+Tracker alarms and status events are retained in `tracker_events`.
 
 ## Real-time (Socket.IO)
 

@@ -14,6 +14,7 @@ const AppVersion = require('./AppVersion');
 const AuditLog = require('./AuditLog');
 const Subscription = require('./Subscription');
 const ParentSchool = require('./ParentSchool');
+const TrackerEvent = require('./TrackerEvent');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -51,6 +52,7 @@ Vehicle.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Vehicle.hasMany(Route, { foreignKey: 'vehicle_id', as: 'routes' });
 Vehicle.hasMany(Trip, { foreignKey: 'vehicle_id', as: 'trips' });
 Vehicle.hasMany(BusLocation, { foreignKey: 'vehicle_id', as: 'locations' });
+Vehicle.hasMany(TrackerEvent, { foreignKey: 'vehicle_id', as: 'trackerEvents' });
 
 Student.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Student.belongsTo(User, { foreignKey: 'parent_id', as: 'parent' });
@@ -71,6 +73,7 @@ Trip.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 Trip.hasMany(TripLog, { foreignKey: 'trip_id', as: 'logs' });
 Trip.hasMany(Message, { foreignKey: 'trip_id', as: 'messages' });
 Trip.hasMany(BusLocation, { foreignKey: 'trip_id', as: 'locations' });
+Trip.hasMany(TrackerEvent, { foreignKey: 'trip_id', as: 'trackerEvents' });
 
 TripLog.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 TripLog.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
@@ -83,6 +86,8 @@ Message.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 BusLocation.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 BusLocation.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 BusLocation.belongsTo(User, { foreignKey: 'driver_id', as: 'driver', onDelete: 'SET NULL' });
+TrackerEvent.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
+TrackerEvent.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 
 RouteStudent.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
 RouteStudent.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
@@ -93,4 +98,4 @@ AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
 
-module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, AppVersion, AuditLog, Subscription };

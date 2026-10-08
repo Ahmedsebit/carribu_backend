@@ -19,6 +19,7 @@ app.use(cors({ origin: '*', credentials: true }));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/tracker', require('./routes/tracker'));
 
 // Swagger API docs
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -86,7 +87,7 @@ if (require.main === module) {
         } catch (e) { console.warn('⚠️ Admin account setup:', e.message); }
       }
 
-      server.listen(PORT, () => { console.log(`🚀 Server: http://localhost:${PORT}`); console.log(`📋 API: http://localhost:${PORT}/api`); console.log(`🔌 Socket.IO ready`); });
+      server.listen(PORT, '::', () => { console.log(`🚀 Server: http://[::]:${PORT}`); console.log(`📋 API: http://localhost:${PORT}/api`); console.log(`🔌 Socket.IO ready`); });
 
       // Remind drivers shortly before each scheduled trip's start time.
       const { startTripReminderScheduler } = require('./services/tripReminders');
