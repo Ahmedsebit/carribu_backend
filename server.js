@@ -87,6 +87,15 @@ if (require.main === module) {
         } catch (e) { console.warn('⚠️ Admin account setup:', e.message); }
       }
 
+      const { startTraccarClient } = require('./services/traccarClient');
+      const traccar = startTraccarClient({ io });
+      const stopTraccar = () => {
+        traccar.stop();
+        process.exit(0);
+      };
+      process.once('SIGTERM', stopTraccar);
+      process.once('SIGINT', stopTraccar);
+
       server.listen(PORT, '::', () => { console.log(`🚀 Server: http://[::]:${PORT}`); console.log(`📋 API: http://localhost:${PORT}/api`); console.log(`🔌 Socket.IO ready`); });
 
       // Remind drivers shortly before each scheduled trip's start time.

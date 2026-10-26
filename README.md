@@ -67,6 +67,9 @@ cp .env.example .env
 | `JWT_SECRET` | Secret key for JWT signing | — |
 | `JWT_EXPIRES_IN` | Token expiry duration | `7d` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery | — |
+| `TRACCAR_ENABLED` | Enable the hosted Traccar REST/WebSocket connection | `false` |
+| `TRACCAR_URL` | Your hosted Traccar server address (HTTPS, optionally ending in `/api`) | — |
+| `TRACCAR_TOKEN` | Traccar account token, stored only in backend deployment secrets | — |
 | `TRACKER_WEBHOOK_TOKEN` | Shared secret for Traccar position/event forwarding | — |
 
 Expo push delivery works without Firebase configuration. To enable native
@@ -195,7 +198,45 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 
 ## Traccar GPS integration
 
-The Traccar endpoints require this header:
+### Traccar-managed hosting (recommended)
+
+Data flows from the GPS tracker to hosted Traccar, then to this backend, and
+finally to the apps through the existing authenticated APIs and Socket.IO.
+Apps do not need Traccar credentials or direct access to Traccar.
+
+1. Create a token in your hosted Traccar account. Use an account with access
+   only to the devices this backend should consume.
+2. Set `TRACCAR_ENABLED=true`, `TRACCAR_URL` to your tracking server address,
+   and `TRACCAR_TOKEN` to the token in backend deployment secrets, then restart.
+   Do not use `https://www.traccar.org` as the server URL.
+3. Map each device's Traccar `uniqueId` (normally the IMEI) to its Carribu
+   vehicle's `trackerUniqueId`, as shown below.
+
+The backend exchanges the token at `GET /api/session?token=...` for a session
+cookie. It fetches `/api/devices`, connects to `/api/socket` using that cookie,
+and loads `/api/positions` before processing queued live messages. Each
+reconnection creates a new session and reloads devices/latest positions.
+Connections retry with exponential backoff (1 to 30 seconds); heartbeat checks
+detect dead sockets. Authentication/connection failures are logged without
+logging tokens or cookies. Bad configuration prevents backend startup.
+
+No `FORWARD_*`, `EVENT_FORWARD_*`, Railway Traccar instance, or webhook secret
+is needed for this mode. Keep `TRACCAR_ENABLED=false` on additional backend
+replicas: run one ingestion connection per database. Existing database
+deduplication handles repeated position/event IDs.
+
+REST initialization restores **latest positions**, not complete position or
+event history missed while disconnected. Events arrive live; historical
+backfill is not implemented. Positions older than the active trip's start
+are ignored so a stale snapshot is not attached to a new trip.
+
+See the official [API overview](https://www.traccar.org/traccar-api/) and
+[API reference](https://www.traccar.org/api-reference/).
+
+### Optional self-hosted forwarding
+
+Existing webhooks remain available for self-hosted Traccar. The endpoints
+require this header:
 
 ```http
 Authorization: Bearer <TRACKER_WEBHOOK_TOKEN>
@@ -205,7 +246,10 @@ Set a long random `TRACKER_WEBHOOK_TOKEN` in the backend Railway service. Set
 the same value on the Traccar service through `FORWARD_HEADER` and
 `EVENT_FORWARD_HEADER`.
 
-Assign the tracker IMEI to its Carribu vehicle before expecting positions:
+### Vehicle mapping and app behavior
+
+For either connection mode, assign the tracker IMEI to its Carribu vehicle
+before expecting positions:
 
 ```http
 PUT /api/vehicles/{vehicleId}
