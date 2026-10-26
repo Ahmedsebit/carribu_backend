@@ -2,6 +2,8 @@ const axios = require('axios');
 const WebSocket = require('ws');
 const { ingestPosition, ingestEvent } = require('./trackerIngestion');
 
+const POSITION_POLL_INTERVAL_MS = 60000;
+
 function readConfig(env) {
   if (!env.TRACCAR_ENABLED || env.TRACCAR_ENABLED === 'false') return null;
   if (env.TRACCAR_ENABLED !== 'true') {
@@ -49,6 +51,7 @@ function startTraccarClient({ io, env = process.env } = {}) {
   function dispose(state) {
     state.abort.abort();
     clearInterval(state.heartbeat);
+    clearInterval(state.pollTimer);
     state.socket?.terminate();
   }
 
@@ -69,6 +72,8 @@ function startTraccarClient({ io, env = process.env } = {}) {
       devices: new Map(),
       socket: null,
       heartbeat: null,
+      pollTimer: null,
+      polling: false,
       queue: Promise.resolve(),
     };
     active = state;
@@ -86,13 +91,14 @@ function startTraccarClient({ io, env = process.env } = {}) {
         return;
       }
       const get = (url, params) => request({ url, params, headers: { Cookie: cookie } });
-      const devices = await get('devices');
-      if (!current()) return;
-      if (!Array.isArray(devices.data)) {
-        reconnect(state, 'invalid devices response');
-        return;
+      async function loadDevices() {
+        const devices = await get('devices');
+        if (!current()) return;
+        if (!Array.isArray(devices.data)) throw new Error('Invalid devices response.');
+        state.devices = new Map(devices.data.map(device => [device.id, device]));
       }
-      for (const device of devices.data) state.devices.set(device.id, device);
+      await loadDevices();
+      if (!current()) return;
 
       async function getDevice(id) {
         if (!state.devices.has(id)) {
@@ -137,6 +143,13 @@ function startTraccarClient({ io, env = process.env } = {}) {
         }
       }
 
+      async function loadPositions() {
+        const positions = await get('positions');
+        if (!current()) return;
+        if (!Array.isArray(positions.data)) throw new Error('Invalid positions response.');
+        await processFrame({ positions: positions.data });
+      }
+
       const socketUrl = new URL('socket', config.baseURL);
       socketUrl.protocol = socketUrl.protocol === 'https:' ? 'wss:' : 'ws:';
       const socket = new WebSocket(socketUrl, {
@@ -151,13 +164,23 @@ function startTraccarClient({ io, env = process.env } = {}) {
       socket.on('open', () => {
         // Queue live messages behind the snapshot so a REST response cannot overwrite newer data.
         state.queue = (async () => {
-          const positions = await get('positions');
-          if (!current()) return;
-          if (!Array.isArray(positions.data)) throw new Error('Invalid positions response.');
-          await processFrame({ positions: positions.data });
+          await loadPositions();
           if (!current()) return;
           retryMs = 1000;
           console.log('Traccar live connection ready.');
+          state.pollTimer = setInterval(() => {
+            if (!current() || state.polling) return;
+            state.polling = true;
+            state.queue = state.queue.then(async () => {
+              if (!current()) return;
+              await loadDevices();
+              if (!current()) return;
+              await loadPositions();
+            }).catch(error => reconnect(state, errorSummary(error)))
+              .finally(() => { state.polling = false; });
+          }, POSITION_POLL_INTERVAL_MS);
+          state.pollTimer.unref();
+          console.log('Traccar location polling enabled (every 60 seconds).');
         })().catch(error => reconnect(state, errorSummary(error)));
         let alive = true;
         socket.on('pong', () => { alive = true; });
