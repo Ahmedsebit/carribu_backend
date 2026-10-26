@@ -1,97 +1,30 @@
-const { BusLocation, Trip, Route, Vehicle, User, Student, TripLog, Message, School } = require('../models');
-const { notifyTrip, notifyUser } = require('../socket');
+const { BusLocation, Trip, Route, Vehicle, User, Student, TripLog, School } = require('../models');
 const { Op } = require('sequelize');
+const { distanceInMeters, recordLocation } = require('../services/locationTracking');
 const {
   getActiveParentSchoolIds,
   hasActiveParentSchool,
-  getActiveParentIdsForSchool,
 } = require('../utils/parentSchoolAccess');
-const toRadians = deg => deg * Math.PI / 180;
-const distanceInMeters = (lat1, lng1, lat2, lng2) => {
-  const R = 6371000;
-  const dLat = toRadians(lat2 - lat1);
-  const dLng = toRadians(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
 exports.updateLocation = async (req, res) => {
   try {
     const { tripId, lat, lng, speed, heading } = req.body;
-    if (!tripId || !lat || !lng) return res.status(400).json({ error: 'tripId, lat, lng required.' });
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!tripId || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({ error: 'tripId, lat, lng required.' });
+    }
     const trip = await Trip.findOne({ where: { id: tripId, driverId: req.user.id, status: 'in_progress' } });
     if (!trip) return res.status(404).json({ error: 'Active trip not found.' });
-    const loc = await BusLocation.create({ tripId, vehicleId: trip.vehicleId, driverId: req.user.id, lat, lng, speed, heading, recordedAt: new Date() });
-
-    // Broadcast the new position to everyone tracking this trip. This is a
-    // fallback for the driver app's direct `driver-location` socket emit, so
-    // parents still get live location even if that socket emit is dropped.
-    notifyTrip(tripId, 'location-update', {
-      tripId,
-      lat: parseFloat(lat),
-      lng: parseFloat(lng),
-      speed: speed != null ? parseFloat(speed) : null,
-      heading: heading != null ? parseFloat(heading) : null,
-      timestamp: Date.now(),
+    const { location } = await recordLocation({
+      trip,
+      schoolId: req.user.schoolId,
+      driverId: req.user.id,
+      lat: latitude,
+      lng: longitude,
+      speed: speed != null ? Number(speed) : null,
+      heading: heading != null ? Number(heading) : null,
     });
-
-    const route = await Route.findByPk(trip.routeId, { include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','email','pickupAddress','pickupLat','pickupLng'] }] }] });
-    if (route) {
-      const activeParentIds = await getActiveParentIdsForSchool(
-        (route.students || []).map(student => student.parent?.id),
-        route.schoolId
-      );
-      const logs = await TripLog.findAll({ where: { tripId }, order: [['created_at','DESC']] });
-      const latestAction = logs.reduce((acc, log) => {
-        if (!acc[log.studentId]) acc[log.studentId] = log.action;
-        return acc;
-      }, {});
-      const pendingStudents = (route.students || []).filter(s => {
-        const action = latestAction[s.id];
-        return action !== 'absent' && action !== 'check_out' && action !== 'check_in';
-      }).filter(s => s.parent && activeParentIds.has(s.parent.id) && s.parent.pickupLat && s.parent.pickupLng);
-
-      // Notify parents when bus is ~5 minutes away from their child
-      const DEFAULT_SPEED_KMH = 30;
-      const STOP_BUFFER_MINUTES = 3;
-      const speedKmh = (speed && parseFloat(speed) > 0) ? parseFloat(speed) : DEFAULT_SPEED_KMH;
-      for (const student of pendingStudents) {
-        const dist = distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(student.parent.pickupLat), parseFloat(student.parent.pickupLng));
-        const stopsBefore = pendingStudents.filter(s => s.RouteStudent.stopOrder < student.RouteStudent.stopOrder).length;
-        const travelMin = ((dist / 1000) / speedKmh) * 60;
-        const totalMin = Math.round(travelMin + (stopsBefore * STOP_BUFFER_MINUTES));
-
-        if (totalMin <= 5 && totalMin > 0) {
-          const content = `⏱️ Bus is ~${totalMin} min away from ${student.firstName}'s stop! ${stopsBefore > 0 ? `(${stopsBefore} stop${stopsBefore > 1 ? 's' : ''} before yours)` : 'You are next!'}`;
-          const recent = await Message.findOne({ where: { receiverId: student.parent.id, senderId: req.user.id, tripId, messageType: 'system', content: { [require('sequelize').Op.like]: '%min away from ' + student.firstName + '%' } }, order: [['created_at','DESC']] });
-          if (!recent || (new Date() - new Date(recent.createdAt)) > 5 * 60 * 1000) {
-            await Message.create({ schoolId: req.user.schoolId, senderId: req.user.id, receiverId: student.parent.id, tripId, content, messageType: 'system' });
-            // Push the proximity alert live so the parent gets a real-time popup.
-            notifyUser(student.parent.id, 'driver-approaching', { tripId, studentName: student.firstName, etaMinutes: totalMin, message: content });
-          }
-        }
-      }
-
-      // Notify nearest parent when bus is within 200m
-      if (pendingStudents.length > 0) {
-        const nearest = pendingStudents.map(s => ({
-          student: s,
-          distance: distanceInMeters(parseFloat(lat), parseFloat(lng), parseFloat(s.parent.pickupLat), parseFloat(s.parent.pickupLng)),
-        })).sort((a, b) => a.distance - b.distance)[0];
-        if (nearest && nearest.distance <= 200) {
-          const parent = nearest.student.parent;
-          const content = `🚍 Driver is approaching ${nearest.student.firstName} ${nearest.student.lastName}'s pickup point. Expected arrival soon.`;
-          const recent = await Message.findOne({ where: { receiverId: parent.id, senderId: req.user.id, tripId, messageType: 'arrival' }, order: [['created_at','DESC']] });
-          if (!recent || (new Date() - new Date(recent.createdAt)) > 10 * 60 * 1000) {
-            await Message.create({ schoolId: req.user.schoolId, senderId: req.user.id, receiverId: parent.id, tripId, content, messageType: 'arrival' });
-            // Push the "within 200m" alert live so the parent gets a real-time popup.
-            notifyUser(parent.id, 'driver-approaching', { tripId, studentName: nearest.student.firstName, message: content });
-          }
-        }
-      }
-    }
-
-    res.status(201).json({ message: 'Location updated.', location: loc });
+    res.status(201).json({ message: 'Location updated.', location });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 exports.getBusLocation = async (req, res) => {

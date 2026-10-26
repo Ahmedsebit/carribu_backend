@@ -12,5 +12,6 @@ const Vehicle = sequelize.define('Vehicle', {
   status: { type: DataTypes.ENUM('active','maintenance','retired'), defaultValue: 'active' },
   insuranceExpiry: { type: DataTypes.DATEONLY, field: 'insurance_expiry' },
   lastServiceDate: { type: DataTypes.DATEONLY, field: 'last_service_date' },
+  trackerUniqueId: { type: DataTypes.STRING(128), allowNull: true, unique: true, field: 'tracker_unique_id' },
 }, { tableName: 'vehicles' });
 module.exports = Vehicle;
