@@ -107,6 +107,98 @@ describe('hosted Traccar REST and WebSocket connection', () => {
     expect(ingestPosition.mock.calls.map(([payload]) => payload.position.id)).toEqual([101, 102]);
   });
 
+  test('refreshes devices and latest locations every 60000 milliseconds with the session cookie', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    const polls = interval.mock.calls.filter(([, delay]) => delay === 60000);
+    expect(polls).toHaveLength(1);
+    devices = [{ id: 7, uniqueId: 'updated-imei' }, { id: 8, uniqueId: 'new-imei' }];
+    positions = [
+      { ...positions[0], id: 102 },
+      { ...positions[0], id: 103, deviceId: 8 },
+    ];
+    polls[0][0]();
+    await until(() => expect(ingestPosition).toHaveBeenCalledTimes(3));
+    expect(ingestPosition.mock.calls.slice(1).map(([payload]) => payload)).toEqual([
+      { position: positions[0], device: devices[0] },
+      { position: positions[1], device: devices[1] },
+    ]);
+    expect(requests.slice(-2).map(req => req.path)).toEqual(['/api/devices', '/api/positions']);
+    expect(requests.slice(-2).every(req => req.cookie === 'JSESSIONID=test-session' && req.token === null)).toBe(true);
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar live connection ready.'));
+    polls[0][0]();
+    await until(() => expect(ingestPosition).toHaveBeenCalledTimes(5));
+    expect(requests.filter(req => req.path === '/api/session')).toHaveLength(1);
+  });
+
+  test('does not overlap slow polls and queues live positions behind a running poll', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    const poll = interval.mock.calls.find(([, delay]) => delay === 60000)[0];
+    let release;
+    positionsResponse = res => { release = () => res.end(JSON.stringify(positions)); };
+    poll();
+    await until(() => expect(release).toBeDefined());
+    poll();
+    poll();
+    broadcast({ positions: [{ ...positions[0], id: 104 }] });
+    expect(ingestPosition).toHaveBeenCalledTimes(1);
+    release();
+    await until(() => expect(ingestPosition).toHaveBeenCalledTimes(3));
+    expect(ingestPosition.mock.calls.map(([payload]) => payload.position.id)).toEqual([101, 101, 104]);
+    expect(requests.filter(req => req.path === '/api/positions')).toHaveLength(2);
+  });
+
+  test('reauthenticates and restarts polling after an expired polling session', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    const clear = jest.spyOn(global, 'clearInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    const pollIndex = interval.mock.calls.findIndex(([, delay]) => delay === 60000);
+    positionsResponse = res => res.writeHead(401).end('{}');
+    interval.mock.calls[pollIndex][0]();
+    await until(() => expect(console.error).toHaveBeenCalledWith(expect.stringContaining('HTTP 401')));
+    expect(clear).toHaveBeenCalledWith(interval.mock.results[pollIndex].value);
+    expect(JSON.stringify(console.error.mock.calls)).not.toContain(env.TRACCAR_TOKEN);
+    positionsResponse = null;
+    await until(() => expect(ingestPosition).toHaveBeenCalledTimes(2));
+    await until(() => expect(interval.mock.calls.filter(([, delay]) => delay === 60000)).toHaveLength(2));
+    expect(requests.filter(req => req.path === '/api/session')).toHaveLength(2);
+  });
+
+  test('logs invalid polling responses and reconnects', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    positionsResponse = res => res.end(JSON.stringify({ invalid: true }));
+    interval.mock.calls.find(([, delay]) => delay === 60000)[0]();
+    await until(() => expect(console.error).toHaveBeenCalled());
+    expect(ingestPosition).toHaveBeenCalledTimes(1);
+  });
+
+  test('stop clears the polling timer and aborts a running poll', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    const clear = jest.spyOn(global, 'clearInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    const pollIndex = interval.mock.calls.findIndex(([, delay]) => delay === 60000);
+    let pendingResponse;
+    positionsResponse = res => { pendingResponse = res; };
+    interval.mock.calls[pollIndex][0]();
+    await until(() => expect(pendingResponse).toBeDefined());
+    client.stop();
+    expect(clear).toHaveBeenCalledWith(interval.mock.results[pollIndex].value);
+    await until(() => expect(pendingResponse.destroyed).toBe(true));
+    const requestCount = requests.length;
+    interval.mock.calls[pollIndex][0]();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(requests).toHaveLength(requestCount);
+    expect(ingestPosition).toHaveBeenCalledTimes(1);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
   test('handles independent device, position, and event messages and resolves new devices', async () => {
     client = startTraccarClient({ env, io });
     await until(() => expect(ingestPosition).toHaveBeenCalledTimes(1));

@@ -67,7 +67,7 @@ cp .env.example .env
 | `JWT_SECRET` | Secret key for JWT signing | — |
 | `JWT_EXPIRES_IN` | Token expiry duration | `7d` |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery | — |
-| `TRACCAR_ENABLED` | Enable the hosted Traccar REST/WebSocket connection | `false` |
+| `TRACCAR_ENABLED` | Enable Traccar one-minute location polling and live WebSocket updates | `false` |
 | `TRACCAR_URL` | Your hosted Traccar server address (HTTPS, optionally ending in `/api`) | — |
 | `TRACCAR_TOKEN` | Traccar account token, stored only in backend deployment secrets | — |
 | `TRACKER_WEBHOOK_TOKEN` | Shared secret for Traccar position/event forwarding | — |
@@ -216,9 +216,21 @@ The backend exchanges the token at `GET /api/session?token=...` for a session
 cookie. It fetches `/api/devices`, connects to `/api/socket` using that cookie,
 and loads `/api/positions` before processing queued live messages. Each
 reconnection creates a new session and reloads devices/latest positions.
+While connected, a backend job refreshes `/api/devices` and `/api/positions`
+every **60 seconds**, using the same authenticated session and ingestion path.
+Polling and live messages are processed in order; a slow poll is never
+overlapped by another poll. Shutdown cancels the timer and pending requests.
 Connections retry with exponential backoff (1 to 30 seconds); heartbeat checks
 detect dead sockets. Authentication/connection failures are logged without
 logging tokens or cookies. Bad configuration prevents backend startup.
+
+This also works with your self-hosted Traccar instance: set `TRACCAR_ENABLED=true`,
+`TRACCAR_URL` to its public HTTPS address, and `TRACCAR_TOKEN` to an account
+token from that instance, then redeploy the backend. The startup log
+`Traccar location polling enabled (every 60 seconds).` confirms the job started.
+Fetching stored positions does not command the physical tracker to obtain
+a new GPS fix; an offline tracker may still return an old position. Existing
+active-trip and stale-position checks still apply.
 
 No `FORWARD_*`, `EVENT_FORWARD_*`, Railway Traccar instance, or webhook secret
 is needed for this mode. Keep `TRACCAR_ENABLED=false` on additional backend
