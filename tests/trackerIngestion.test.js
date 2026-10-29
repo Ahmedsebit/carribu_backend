@@ -7,9 +7,11 @@ jest.mock('../models', () => ({
   TrackerEvent: { findOrCreate: jest.fn(), create: jest.fn() },
 }));
 jest.mock('../services/locationTracking', () => ({ recordLocation: jest.fn() }));
+jest.mock('../services/trackerPositionSnapshot', () => ({ rememberTrackerPosition: jest.fn() }));
 
 const { Vehicle, Trip, TrackerEvent } = require('../models');
 const { recordLocation } = require('../services/locationTracking');
+const { rememberTrackerPosition } = require('../services/trackerPositionSnapshot');
 const { ingestPosition, ingestEvent } = require('../services/trackerIngestion');
 const controller = require('../controllers/trackerController');
 
@@ -29,6 +31,7 @@ describe('shared Traccar ingestion', () => {
     Vehicle.findOne.mockResolvedValue(vehicle);
     Trip.findOne.mockResolvedValue(trip);
     recordLocation.mockResolvedValue({ location: { id: 10 }, created: true });
+    rememberTrackerPosition.mockResolvedValue(true);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -48,14 +51,44 @@ describe('shared Traccar ingestion', () => {
     expect((await ingestPosition({ device, position })).body.duplicate).toBe(true);
   });
 
-  test('ignores stale snapshots, invalid fixes, unknown devices, and trips that are not active', async () => {
+  test('keeps stale snapshots separate from trip history and ignores invalid, unknown and off-trip updates', async () => {
     const old = await ingestPosition({ device, position: { ...position, fixTime: '2026-10-22T00:00:00Z' } });
     expect(old.body.ignored).toBe('position_before_trip');
+    expect(rememberTrackerPosition).toHaveBeenCalledWith(expect.objectContaining({
+      trackerUniqueId: 'test-imei', vehicleId: 1, recordedAt: new Date('2026-10-22T00:00:00Z'),
+    }));
+    rememberTrackerPosition.mockClear();
     expect((await ingestPosition({ device, position: { ...position, valid: false } })).body.ignored).toBe('invalid_gps_fix');
     Vehicle.findOne.mockResolvedValueOnce(null);
     expect((await ingestPosition({ device, position })).body.ignored).toBe('unknown_device');
     Trip.findOne.mockResolvedValueOnce(null);
     expect((await ingestPosition({ device, position })).body.ignored).toBe('no_active_trip');
+    expect(recordLocation).not.toHaveBeenCalled();
+    expect(rememberTrackerPosition).not.toHaveBeenCalled();
+  });
+
+  test.each([undefined, 'not-a-date'])('does not invent a fresh fix time from %p', async fixTime => {
+    const result = await ingestPosition({ device, position: { ...position, fixTime } });
+    expect(result.body.ignored).toBe('invalid_position_time');
+    expect(rememberTrackerPosition).not.toHaveBeenCalled();
+    expect(recordLocation).not.toHaveBeenCalled();
+  });
+
+  test.each([null, ''])('rejects missing coordinates %p instead of storing a false zero position', async latitude => {
+    expect((await ingestPosition({ device, position: { ...position, latitude } })).status).toBe(400);
+    expect(rememberTrackerPosition).not.toHaveBeenCalled();
+  });
+
+  test('does not ingest a position if the tracker assignment changed while resolving it', async () => {
+    rememberTrackerPosition.mockResolvedValue(false);
+    const result = await ingestPosition({ device, position });
+    expect(result.body.ignored).toBe('tracker_assignment_changed');
+    expect(recordLocation).not.toHaveBeenCalled();
+  });
+
+  test('surfaces snapshot persistence failures', async () => {
+    rememberTrackerPosition.mockRejectedValue(new Error('Snapshot database unavailable.'));
+    await expect(ingestPosition({ device, position })).rejects.toThrow('Snapshot database unavailable.');
     expect(recordLocation).not.toHaveBeenCalled();
   });
 

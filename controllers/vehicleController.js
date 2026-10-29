@@ -1,4 +1,4 @@
-const { Vehicle, School, Route, User, Trip, TripLog, Student, BusLocation } = require('../models');
+const { Vehicle, School, Route, User, Trip, TripLog, Student, BusLocation, VehicleTrackerPosition } = require('../models');
 const { Op } = require('sequelize');
 const { getLocationSource, getTripLocationWhere } = require('../services/locationTracking');
 exports.getAll = async (req, res) => {
@@ -42,11 +42,18 @@ exports.getLocation = async (req, res) => {
     if (!trip) return res.json({ trip: null, location: null, locationSource });
 
     const where = await getTripLocationWhere({ id: trip.id, status: trip.status, vehicle });
-    const location = await BusLocation.findOne({
+    let location = await BusLocation.findOne({
       where: { ...where, vehicleId: vehicle.id },
       attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
       order: [['recorded_at', 'DESC']],
     });
+    let isLastKnown = false;
+    if (!location && locationSource === 'traccar') {
+      location = await VehicleTrackerPosition.findOne({
+        where: { vehicleId: vehicle.id, trackerUniqueId: vehicle.trackerUniqueId },
+      });
+      isLastKnown = Boolean(location);
+    }
     res.json({
       trip: { id: trip.id, status: trip.status, route: trip.route },
       locationSource,
@@ -56,7 +63,10 @@ exports.getLocation = async (req, res) => {
         speed: location.speed == null ? null : parseFloat(location.speed),
         heading: location.heading == null ? null : parseFloat(location.heading),
         recordedAt: location.recordedAt,
-        source: location.source,
+        source: isLastKnown ? 'traccar' : location.source,
+        isLastKnown,
+        predatesTrip: Boolean(isLastKnown && trip.startedAt
+          && new Date(location.recordedAt) < new Date(trip.startedAt)),
       } : null,
     });
   } catch (err) { res.status(err.status || 500).json({ error: err.message }); }

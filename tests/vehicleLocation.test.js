@@ -6,13 +6,14 @@ jest.mock('../models', () => ({
   Vehicle: { findOne: jest.fn() },
   Trip: { findOne: jest.fn() },
   BusLocation: { findOne: jest.fn() },
+  VehicleTrackerPosition: { findOne: jest.fn() },
   User: { findByPk: jest.fn() },
   School: {}, Route: {}, Student: {}, TripLog: {}, Message: {},
 }));
 jest.mock('../socket', () => ({ notifyTrip: jest.fn(), notifyUser: jest.fn() }));
 jest.mock('../utils/parentSchoolAccess', () => ({ getActiveParentIdsForSchool: jest.fn() }));
 
-const { Vehicle, Trip, BusLocation, User } = require('../models');
+const { Vehicle, Trip, BusLocation, User, VehicleTrackerPosition } = require('../models');
 const app = express();
 app.use('/api/vehicles', require('../routes/vehicles'));
 const secret = 'vehicle-location-test-secret';
@@ -36,10 +37,12 @@ beforeEach(() => {
   vehicle = { id: 12, schoolId: 1, trackerUniqueId: 'test-device' };
   trip = {
     id: 5, vehicleId: 12, status: 'in_progress',
+    startedAt: new Date('2026-10-29T08:00:00Z'),
     route: { id: 3, name: 'Test route', schoolId: 1 },
   };
   locations = [];
   User.findByPk.mockResolvedValue({ id: 8, isActive: true });
+  VehicleTrackerPosition.findOne.mockResolvedValue(null);
   Vehicle.findOne.mockImplementation(async ({ where }) =>
     where.id === vehicle.id && where.schoolId === vehicle.schoolId ? vehicle : null);
   Trip.findOne.mockImplementation(async ({ where, include }) =>
@@ -88,6 +91,7 @@ test('does not expose a vehicle belonging to another school', async () => {
   expect(response.status).toBe(404);
   expect(Trip.findOne).not.toHaveBeenCalled();
   expect(BusLocation.findOne).not.toHaveBeenCalled();
+  expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
 });
 
 test.each([null, 'completed', 'scheduled', 'cancelled'])('returns no map without an active trip (%s)', async status => {
@@ -136,6 +140,40 @@ test('returns the newest authoritative fix', async () => {
     { tripId: 5, vehicleId: 12, source: 'traccar', lat: -2, lng: 37, recordedAt: '2026-10-29T08:10:00Z' },
   );
   expect((await getLocation()).body.location.lat).toBe(-2);
+  expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+});
+
+test('shows a matching last-known snapshot with its original pre-trip timestamp', async () => {
+  VehicleTrackerPosition.findOne.mockResolvedValue({
+    lat: '-1.3', lng: '36.8', speed: '0', heading: '0',
+    recordedAt: new Date('2026-10-29T07:00:00Z'),
+  });
+  const response = await getLocation();
+  expect(response.status).toBe(200);
+  expect(response.body.location).toEqual({
+    lat: -1.3, lng: 36.8, speed: 0, heading: 0, recordedAt: '2026-10-29T07:00:00.000Z',
+    source: 'traccar', isLastKnown: true, predatesTrip: true,
+  });
+  expect(VehicleTrackerPosition.findOne).toHaveBeenCalledWith({
+    where: { vehicleId: 12, trackerUniqueId: 'test-device' },
+  });
+});
+
+test('does not read snapshots outside active trips or after unlinking', async () => {
+  trip.status = 'completed';
+  expect((await getLocation()).body.location).toBeNull();
+  expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+  trip.status = 'in_progress';
+  vehicle.trackerUniqueId = null;
+  expect((await getLocation()).body.location).toBeNull();
+  expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+});
+
+test('surfaces snapshot retrieval failures instead of treating them as no GPS fix', async () => {
+  VehicleTrackerPosition.findOne.mockRejectedValue(new Error('Snapshot retrieval unavailable.'));
+  const response = await getLocation();
+  expect(response.status).toBe(500);
+  expect(response.body.error).toBe('Snapshot retrieval unavailable.');
 });
 
 test.each(['0', '-1', 'invalid', '1.5', '9007199254740992'])('rejects invalid vehicle ID %s', async id => {

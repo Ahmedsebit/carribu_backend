@@ -15,6 +15,7 @@ const AuditLog = require('./AuditLog');
 const Subscription = require('./Subscription');
 const ParentSchool = require('./ParentSchool');
 const TrackerEvent = require('./TrackerEvent');
+const VehicleTrackerPosition = require('./VehicleTrackerPosition');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -53,6 +54,8 @@ Vehicle.hasMany(Route, { foreignKey: 'vehicle_id', as: 'routes' });
 Vehicle.hasMany(Trip, { foreignKey: 'vehicle_id', as: 'trips' });
 Vehicle.hasMany(BusLocation, { foreignKey: 'vehicle_id', as: 'locations' });
 Vehicle.hasMany(TrackerEvent, { foreignKey: 'vehicle_id', as: 'trackerEvents' });
+Vehicle.hasOne(VehicleTrackerPosition, { foreignKey: 'vehicleId', as: 'trackerPosition', onDelete: 'CASCADE' });
+VehicleTrackerPosition.belongsTo(Vehicle, { foreignKey: 'vehicleId', as: 'vehicle', onDelete: 'CASCADE' });
 
 Student.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Student.belongsTo(User, { foreignKey: 'parent_id', as: 'parent' });
@@ -98,4 +101,4 @@ AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
 
-module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, AppVersion, AuditLog, Subscription };

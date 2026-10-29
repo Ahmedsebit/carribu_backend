@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const { io: connectClient } = require('socket.io-client');
 
 jest.mock('../models', () => ({
+  sequelize: { transaction: jest.fn() },
+  VehicleTrackerPosition: { findByPk: jest.fn(), findOne: jest.fn(), upsert: jest.fn() },
   BusLocation: { create: jest.fn(), findOrCreate: jest.fn(), findOne: jest.fn(), findAll: jest.fn() },
   Trip: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn() },
   Vehicle: { findOne: jest.fn(), findByPk: jest.fn() },
@@ -25,7 +27,7 @@ jest.mock('../utils/parentSchoolAccess', () => ({
   getActiveParentIdsForSchool: jest.fn(),
 }));
 
-const { BusLocation, Trip, Vehicle, Route, User, Student, TripLog } = require('../models');
+const { sequelize, VehicleTrackerPosition, BusLocation, Trip, Vehicle, Route, User, Student, TripLog } = require('../models');
 const { hasActiveParentSchool, getActiveParentSchoolIds } = require('../utils/parentSchoolAccess');
 const { initSocket } = require('../socket');
 const { ingestPosition } = require('../services/trackerIngestion');
@@ -42,7 +44,7 @@ const io = initSocket(server);
 const secret = 'location-source-tests-only';
 const token = (role = 'driver', id = 3, schoolId = 4) => jwt.sign({ id, role, schoolId }, secret);
 const payload = { tripId: 2, lat: -1.2, lng: 36.8, speed: 20, heading: 90 };
-let originalSecret, vehicle, trip, locations, clients;
+let originalSecret, vehicle, trip, locations, clients, snapshot;
 
 const invoke = async (handler, req) => {
   const res = { statusCode: 200, status: jest.fn(function status(code) { this.statusCode = code; return this; }), json: jest.fn() };
@@ -91,6 +93,7 @@ beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   locations = [];
+  snapshot = null;
   clients = [];
   vehicle = { id: 1, schoolId: 4, status: 'active', trackerUniqueId: 'device-id' };
   trip = {
@@ -100,6 +103,11 @@ beforeEach(() => {
     toJSON() { return { ...this }; },
   };
   User.findByPk.mockResolvedValue({ id: 3, isActive: true, pickupLat: null, pickupLng: null });
+  sequelize.transaction.mockImplementation(async callback => callback({ LOCK: { UPDATE: 'UPDATE' } }));
+  VehicleTrackerPosition.findByPk.mockImplementation(async () => snapshot);
+  VehicleTrackerPosition.upsert.mockImplementation(async values => { snapshot = { ...values }; });
+  VehicleTrackerPosition.findOne.mockImplementation(async ({ where }) => snapshot
+    && Object.entries(where).every(([key, value]) => snapshot[key] === value) ? snapshot : null);
   Vehicle.findByPk.mockResolvedValue(vehicle);
   Vehicle.findOne.mockImplementation(async ({ where }) => {
     if (where.trackerUniqueId !== undefined) {
@@ -261,6 +269,88 @@ describe('authoritative active-trip location source', () => {
     expect(ended.status).toBe(200);
     expect(ended.body).toEqual({ trip: null, location: null, locationSource: 'traccar' });
     expect(locations).toHaveLength(1);
+  });
+
+  test('shows an older device snapshot without adding it to trip history or running arrival logic', async () => {
+    const position = {
+      id: 700, latitude: -1.3, longitude: 36.9,
+      fixTime: '2026-10-28T07:00:00Z', speed: 0, course: 0, valid: true,
+    };
+    const result = await ingestPosition({ device: { uniqueId: 'device-id' }, position });
+    expect(result.body.ignored).toBe('position_before_trip');
+    expect(locations).toHaveLength(0);
+    expect(Route.findByPk).not.toHaveBeenCalled();
+    expect(Vehicle.findOne).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 1, trackerUniqueId: 'device-id', status: 'active' },
+      lock: 'UPDATE', transaction: expect.anything(),
+    }));
+    const response = await request(app).get('/vehicles/1/location')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(response.status).toBe(200);
+    expect(response.body.location).toMatchObject({
+      lat: -1.3, lng: 36.9, source: 'traccar', isLastKnown: true, predatesTrip: true,
+      recordedAt: '2026-10-28T07:00:00.000Z',
+    });
+    const history = await request(app).get('/location/history/2')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(history.body.locations).toEqual([]);
+
+    await ingestPosition({ device: { uniqueId: 'device-id' }, position: {
+      ...position, id: 701, latitude: -1.4, fixTime: '2026-10-28T08:05:00Z',
+    } });
+    const fresh = await request(app).get('/vehicles/1/location')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(fresh.body.location).toMatchObject({ lat: -1.4, isLastKnown: false, predatesTrip: false });
+    expect(locations).toHaveLength(1);
+  });
+
+  test('a delayed older fix cannot overwrite a newer snapshot', async () => {
+    const position = { latitude: -1.3, longitude: 36.9, valid: true, fixTime: '2026-10-28T07:00:00Z' };
+    await ingestPosition({ device: { uniqueId: 'device-id' }, position });
+    await ingestPosition({ device: { uniqueId: 'device-id' }, position: {
+      ...position, latitude: -2, fixTime: '2026-10-28T06:00:00Z',
+    } });
+    expect(snapshot.lat).toBe(-1.3);
+    expect(snapshot.recordedAt.toISOString()).toBe('2026-10-28T07:00:00.000Z');
+    expect(VehicleTrackerPosition.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  test('rechecks the tracker mapping before saving its snapshot', async () => {
+    Vehicle.findOne.mockResolvedValueOnce(vehicle).mockResolvedValueOnce(null);
+    const result = await ingestPosition({ device: { uniqueId: 'device-id' }, position: {
+      latitude: -1.3, longitude: 36.9, valid: true, fixTime: '2026-10-28T07:00:00Z',
+    } });
+    expect(result.body.ignored).toBe('tracker_assignment_changed');
+    expect(VehicleTrackerPosition.upsert).not.toHaveBeenCalled();
+    expect(locations).toHaveLength(0);
+  });
+
+  test('hides the old device snapshot after reassignment and accepts the new device original timestamp', async () => {
+    const position = { latitude: -1.3, longitude: 36.9, valid: true, fixTime: '2026-10-28T07:00:00Z' };
+    await ingestPosition({ device: { uniqueId: 'device-id' }, position });
+    vehicle.trackerUniqueId = 'replacement-device';
+    const read = () => request(app).get('/vehicles/1/location')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect((await read()).body.location).toBeNull();
+    await ingestPosition({ device: { uniqueId: 'replacement-device' }, position: {
+      ...position, latitude: -2, fixTime: '2026-10-28T06:00:00Z',
+    } });
+    expect((await read()).body.location).toMatchObject({
+      lat: -2, isLastKnown: true, recordedAt: '2026-10-28T06:00:00.000Z',
+    });
+  });
+
+  test('does not save or expose snapshots without an active trip', async () => {
+    trip.status = 'completed';
+    const result = await ingestPosition({ device: { uniqueId: 'device-id' }, position: {
+      latitude: -1.3, longitude: 36.9, valid: true, fixTime: '2026-10-28T07:00:00Z',
+    } });
+    expect(result.body.ignored).toBe('no_active_trip');
+    expect(sequelize.transaction).not.toHaveBeenCalled();
+    const response = await request(app).get('/vehicles/1/location')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(response.body.location).toBeNull();
+    expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
   });
 
   test('does not fall back to phone GPS while waiting for the first device fix', async () => {
