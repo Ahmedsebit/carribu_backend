@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { BusLocation, Trip, Vehicle, Route, User, Student, TripLog, Message } = require('../models');
+const { BusLocation, Trip, Vehicle, VehicleTrackerPosition, Route, User, Student, TripLog, Message } = require('../models');
 const { notifyTrip, notifyUser } = require('../socket');
 const { getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
 
@@ -13,6 +13,41 @@ async function getTripLocationWhere(trip) {
     where.source = getLocationSource(vehicle);
   }
   return where;
+}
+
+async function getAdminTripLocation(trip) {
+  const isActive = trip.status === 'in_progress';
+  const vehicle = isActive ? trip.vehicle || await Vehicle.findByPk(trip.vehicleId) : null;
+  if (isActive && !vehicle) {
+    throw Object.assign(new Error('Trip vehicle not found.'), { status: 404 });
+  }
+  const where = await getTripLocationWhere({
+    id: trip.id, status: trip.status, vehicleId: trip.vehicleId, vehicle,
+  });
+  if (isActive) where.vehicleId = vehicle.id;
+  let location = await BusLocation.findOne({
+    where,
+    attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
+    order: [['recorded_at', 'DESC']],
+  });
+  let isLastKnown = false;
+  if (!location && isActive && getLocationSource(vehicle) === 'traccar') {
+    location = await VehicleTrackerPosition.findOne({
+      where: { vehicleId: vehicle.id, trackerUniqueId: vehicle.trackerUniqueId },
+    });
+    isLastKnown = Boolean(location);
+  }
+  return location ? {
+    lat: parseFloat(location.lat),
+    lng: parseFloat(location.lng),
+    speed: location.speed == null ? null : parseFloat(location.speed),
+    heading: location.heading == null ? null : parseFloat(location.heading),
+    recordedAt: location.recordedAt,
+    source: isLastKnown ? 'traccar' : location.source,
+    isLastKnown,
+    predatesTrip: Boolean(isLastKnown && trip.startedAt
+      && new Date(location.recordedAt) < new Date(trip.startedAt)),
+  } : null;
 }
 
 async function recordDriverLocation({ tripId, lat, lng, speed, heading } = {}, user) {
@@ -224,4 +259,4 @@ async function recordLocation({
   return { location, created };
 }
 
-module.exports = { distanceInMeters, recordLocation, recordDriverLocation, getLocationSource, getTripLocationWhere };
+module.exports = { distanceInMeters, recordLocation, recordDriverLocation, getLocationSource, getTripLocationWhere, getAdminTripLocation };

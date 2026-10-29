@@ -39,6 +39,7 @@ const app = express();
 app.use(express.json());
 app.use('/location', require('../routes/location'));
 app.use('/vehicles', require('../routes/vehicles'));
+app.use('/trips', require('../routes/trips'));
 const server = http.createServer(app);
 const io = initSocket(server);
 const secret = 'location-source-tests-only';
@@ -291,6 +292,11 @@ describe('authoritative active-trip location source', () => {
       lat: -1.3, lng: 36.9, source: 'traccar', isLastKnown: true, predatesTrip: true,
       recordedAt: '2026-10-28T07:00:00.000Z',
     });
+    const details = await request(app).get('/trips/2/details')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(details.status).toBe(200);
+    expect(details.body.trip.location).toEqual(response.body.location);
+    expect(details.body.trip.locationSource).toBe('traccar');
     const history = await request(app).get('/location/history/2')
       .set('Authorization', `Bearer ${token('school_admin')}`);
     expect(history.body.locations).toEqual([]);
@@ -301,7 +307,46 @@ describe('authoritative active-trip location source', () => {
     const fresh = await request(app).get('/vehicles/1/location')
       .set('Authorization', `Bearer ${token('school_admin')}`);
     expect(fresh.body.location).toMatchObject({ lat: -1.4, isLastKnown: false, predatesTrip: false });
+    const freshDetails = await request(app).get('/trips/2/details')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(freshDetails.body.trip.location).toEqual(fresh.body.location);
     expect(locations).toHaveLength(1);
+  });
+
+  test('trip details never substitute a current vehicle snapshot for completed trip history', async () => {
+    trip.status = 'completed';
+    snapshot = {
+      vehicleId: 1, trackerUniqueId: 'device-id', lat: -3, lng: 38,
+      recordedAt: new Date('2026-10-28T10:00:00Z'),
+    };
+    const read = () => request(app).get('/trips/2/details')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect((await read()).body.trip.location).toBeNull();
+    locations.push({
+      tripId: 2, vehicleId: 1, source: 'phone', lat: -1, lng: 36,
+      recordedAt: new Date('2026-10-28T08:30:00Z'),
+    });
+    const details = await read();
+    expect(details.body.trip.location).toMatchObject({
+      lat: -1, lng: 36, source: 'phone', isLastKnown: false, predatesTrip: false,
+    });
+    expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+  });
+
+  test('school authorization is checked before trip details read a device snapshot', async () => {
+    const response = await request(app).get('/trips/2/details')
+      .set('Authorization', `Bearer ${token('school_admin', 3, 99)}`);
+    expect(response.status).toBe(404);
+    expect(BusLocation.findOne).not.toHaveBeenCalled();
+    expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+  });
+
+  test('trip details surface snapshot read failures instead of reporting missing GPS', async () => {
+    VehicleTrackerPosition.findOne.mockRejectedValueOnce(new Error('Snapshot lookup unavailable.'));
+    const response = await request(app).get('/trips/2/details')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Snapshot lookup unavailable.');
   });
 
   test('a delayed older fix cannot overwrite a newer snapshot', async () => {
@@ -398,7 +443,9 @@ describe('authoritative active-trip location source', () => {
     const details = await invoke(tripController.getDetails, { params: { id: 2 }, user: { schoolId: 4 } });
     expect(details.status).toBe(200);
     expect(details.body.trip.location).toBeNull();
-    expect(BusLocation.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { tripId: 2, source: 'traccar' } }));
+    expect(BusLocation.findOne).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { tripId: 2, vehicleId: 1, source: 'traccar' },
+    }));
   });
 
   test('the driver active-trip response announces the device location source', async () => {

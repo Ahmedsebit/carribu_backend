@@ -1,6 +1,6 @@
-const { Vehicle, School, Route, User, Trip, TripLog, Student, BusLocation, VehicleTrackerPosition } = require('../models');
+const { Vehicle, School, Route, User, Trip, TripLog, Student } = require('../models');
 const { Op } = require('sequelize');
-const { getLocationSource, getTripLocationWhere } = require('../services/locationTracking');
+const { getLocationSource, getAdminTripLocation } = require('../services/locationTracking');
 exports.getAll = async (req, res) => {
   try {
     const where = { schoolId: req.user.schoolId };
@@ -41,33 +41,13 @@ exports.getLocation = async (req, res) => {
     });
     if (!trip) return res.json({ trip: null, location: null, locationSource });
 
-    const where = await getTripLocationWhere({ id: trip.id, status: trip.status, vehicle });
-    let location = await BusLocation.findOne({
-      where: { ...where, vehicleId: vehicle.id },
-      attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
-      order: [['recorded_at', 'DESC']],
+    const location = await getAdminTripLocation({
+      id: trip.id, status: trip.status, startedAt: trip.startedAt, vehicleId: vehicle.id, vehicle,
     });
-    let isLastKnown = false;
-    if (!location && locationSource === 'traccar') {
-      location = await VehicleTrackerPosition.findOne({
-        where: { vehicleId: vehicle.id, trackerUniqueId: vehicle.trackerUniqueId },
-      });
-      isLastKnown = Boolean(location);
-    }
     res.json({
       trip: { id: trip.id, status: trip.status, route: trip.route },
       locationSource,
-      location: location ? {
-        lat: parseFloat(location.lat),
-        lng: parseFloat(location.lng),
-        speed: location.speed == null ? null : parseFloat(location.speed),
-        heading: location.heading == null ? null : parseFloat(location.heading),
-        recordedAt: location.recordedAt,
-        source: isLastKnown ? 'traccar' : location.source,
-        isLastKnown,
-        predatesTrip: Boolean(isLastKnown && trip.startedAt
-          && new Date(location.recordedAt) < new Date(trip.startedAt)),
-      } : null,
+      location,
     });
   } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };

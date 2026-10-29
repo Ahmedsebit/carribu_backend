@@ -1,4 +1,4 @@
-const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent, BusLocation } = require('../models');
+const { Trip, TripLog, Route, Vehicle, User, Student, Message, RouteStudent } = require('../models');
 const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser, notifyTrip } = require('../socket');
@@ -15,7 +15,7 @@ const {
   sortStudentsForTrip,
 } = require('../services/routeOrdering');
 const { getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
-const { getTripLocationWhere } = require('../services/locationTracking');
+const { getAdminTripLocation, getLocationSource } = require('../services/locationTracking');
 
 // Helper: calculate ETA based on stops away (avg 3 min per stop)
 function estimateETA(stopsAway) {
@@ -259,11 +259,7 @@ exports.getDetails = async (req, res) => {
           const nextStop = pickupList.find(student => actionableStatuses.includes(student.status)) || null;
           const waitValues = pickupList.filter(student => student.waitSeconds != null).map(student => student.waitSeconds);
           const completedStops = pickupList.filter(student => ['on_bus', 'dropped_off', 'absent'].includes(student.status)).length;
-          const latestLocation = await BusLocation.findOne({
-            where: await getTripLocationWhere(trip),
-            attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
-            order: [['recorded_at', 'DESC']],
-          });
+          const latestLocation = await getAdminTripLocation(trip);
 
           res.json({
             trip: {
@@ -282,18 +278,13 @@ exports.getDetails = async (req, res) => {
                 departureTime: value.route.departureTime,
               } : null,
               vehicle: value.vehicle,
+              locationSource: value.status === 'in_progress' && value.vehicle
+                ? getLocationSource(value.vehicle) : latestLocation?.source || null,
               driver: value.driver,
               pickupList,
               nextStop,
               logs,
-              location: latestLocation ? {
-                lat: parseFloat(latestLocation.lat),
-                lng: parseFloat(latestLocation.lng),
-                speed: latestLocation.speed == null ? null : parseFloat(latestLocation.speed),
-                heading: latestLocation.heading == null ? null : parseFloat(latestLocation.heading),
-                recordedAt: latestLocation.recordedAt,
-                source: latestLocation.source,
-              } : null,
+              location: latestLocation,
               stats: {
                 totalStudents: pickupList.length,
                 completedStops,
