@@ -117,6 +117,51 @@ router.get('/schools/:id/resources', c.getSchoolResources);
 
 /**
  * @swagger
+ * /api/super-admin/schools/{schoolId}/vehicles/{vehicleId}/tracker:
+ *   put:
+ *     summary: Link, replace, or unlink a vehicle tracker (super_admin only)
+ *     tags: [Super Admin]
+ *     parameters:
+ *       - in: path
+ *         name: schoolId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: path
+ *         name: vehicleId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             additionalProperties: false
+ *             required: [trackerUniqueId]
+ *             properties:
+ *               trackerUniqueId:
+ *                 type: string
+ *                 nullable: true
+ *                 maxLength: 128
+ *                 description: Traccar Identifier (normally IMEI); null removes the link
+ *     responses:
+ *       200:
+ *         description: Tracker assignment updated
+ *       400:
+ *         description: Invalid tracker identifier or request
+ *       403:
+ *         description: Super admin access required
+ *       404:
+ *         description: Vehicle not found in this school
+ *       409:
+ *         description: Tracker already assigned to another vehicle
+ */
+router.put('/schools/:schoolId/vehicles/:vehicleId/tracker', c.updateVehicleTracker);
+
+/**
+ * @swagger
  * /api/super-admin/schools:
  *   post:
  *     summary: Create a new school

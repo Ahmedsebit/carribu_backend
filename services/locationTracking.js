@@ -1,7 +1,54 @@
 const { Op } = require('sequelize');
-const { BusLocation, Route, User, Student, TripLog, Message } = require('../models');
+const { BusLocation, Trip, Vehicle, Route, User, Student, TripLog, Message } = require('../models');
 const { notifyTrip, notifyUser } = require('../socket');
 const { getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
+
+const getLocationSource = vehicle => vehicle.trackerUniqueId?.trim() ? 'traccar' : 'phone';
+
+async function getTripLocationWhere(trip) {
+  const where = { tripId: trip.id };
+  if (trip.status === 'in_progress') {
+    const vehicle = trip.vehicle || await Vehicle.findByPk(trip.vehicleId);
+    if (!vehicle) throw Object.assign(new Error('Trip vehicle not found.'), { status: 404 });
+    where.source = getLocationSource(vehicle);
+  }
+  return where;
+}
+
+async function recordDriverLocation({ tripId, lat, lng, speed, heading } = {}, user) {
+  if (!['driver', 'coordinator', 'school_admin'].includes(user.role)) {
+    throw Object.assign(new Error('Only the assigned driver can update a trip location.'), { status: 403 });
+  }
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!tripId || lat == null || lng == null || lat === '' || lng === ''
+    || !Number.isFinite(latitude) || !Number.isFinite(longitude)
+    || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    throw Object.assign(new Error('A tripId and valid lat/lng coordinates are required.'), { status: 400 });
+  }
+  const trip = await Trip.findOne({
+    where: { id: tripId, driverId: user.id, status: 'in_progress' },
+    include: [
+      { model: Vehicle, as: 'vehicle', attributes: ['id', 'trackerUniqueId'] },
+      { model: Route, as: 'route', where: { schoolId: user.schoolId }, attributes: ['schoolId'], required: true },
+    ],
+  });
+  if (!trip || !trip.vehicle) {
+    throw Object.assign(new Error('Active trip not found.'), { status: 404 });
+  }
+  if (getLocationSource(trip.vehicle) === 'traccar') {
+    throw Object.assign(new Error('This trip uses its linked Traccar device. Phone GPS sharing must stop.'), {
+      status: 409, code: 'TRACCAR_LOCATION_REQUIRED',
+    });
+  }
+  return recordLocation({
+    trip, schoolId: user.schoolId, driverId: user.id,
+    lat: latitude, lng: longitude,
+    speed: speed == null ? null : Number(speed),
+    heading: heading == null ? null : Number(heading),
+    source: 'phone',
+  });
+}
 
 const toRadians = deg => deg * Math.PI / 180;
 const distanceInMeters = (lat1, lng1, lat2, lng2) => {
@@ -23,6 +70,7 @@ async function recordLocation({
   heading,
   recordedAt = new Date(),
   trackerPositionId = null,
+  source = 'phone',
 }) {
   const values = {
     tripId: trip.id,
@@ -34,6 +82,7 @@ async function recordLocation({
     heading,
     recordedAt,
     trackerPositionId,
+    source,
   };
   let location;
   let created = true;
@@ -49,11 +98,13 @@ async function recordLocation({
 
   notifyTrip(trip.id, 'location-update', {
     tripId: trip.id,
+    driverId: values.driverId,
     lat,
     lng,
     speed,
     heading,
     timestamp: recordedAt.getTime(),
+    source,
   });
 
   const route = await Route.findByPk(trip.routeId, {
@@ -173,4 +224,4 @@ async function recordLocation({
   return { location, created };
 }
 
-module.exports = { distanceInMeters, recordLocation };
+module.exports = { distanceInMeters, recordLocation, recordDriverLocation, getLocationSource, getTripLocationWhere };

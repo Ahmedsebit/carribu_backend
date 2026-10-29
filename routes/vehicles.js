@@ -103,9 +103,6 @@ router.get('/:id', c.getById);
  *               insuranceExpiry:
  *                 type: string
  *                 format: date
- *               trackerUniqueId:
- *                 type: string
- *                 description: Traccar device unique ID, normally the tracker IMEI
  *     responses:
  *       201:
  *         description: Vehicle created
@@ -149,10 +146,6 @@ router.post('/', authorize('school_admin','coordinator'), c.create);
  *               insuranceExpiry:
  *                 type: string
  *                 format: date
- *               trackerUniqueId:
- *                 type: string
- *                 nullable: true
- *                 description: Traccar device unique ID, normally the tracker IMEI
  *     responses:
  *       200:
  *         description: Vehicle updated

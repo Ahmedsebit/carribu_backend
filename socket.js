@@ -19,6 +19,8 @@ const PUSH_TITLES = {
 let io;
 
 function initSocket(server) {
+  // Load after socket exports are initialized; locationTracking emits through this module.
+  const { recordDriverLocation } = require('./services/locationTracking');
   io = new Server(server, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
   });
@@ -57,11 +59,20 @@ function initSocket(server) {
     });
 
     // Driver sends location update
-    socket.on('driver-location', (data) => {
-      // data: { tripId, lat, lng, speed, heading }
-      const payload = { ...data, driverId: id, timestamp: Date.now() };
-      // Broadcast to all tracking this trip
-      io.to(`trip:${data.tripId}`).emit('location-update', payload);
+    socket.on('driver-location', async (data, acknowledge) => {
+      try {
+        const { location } = await recordDriverLocation(data || {}, socket.user);
+        if (typeof acknowledge === 'function') acknowledge({ accepted: true, locationId: location.id, source: 'phone' });
+      } catch (err) {
+        const result = {
+          status: err.status || 500,
+          code: err.code || 'LOCATION_UPDATE_FAILED',
+          error: err.status ? err.message : 'Unable to update trip location.',
+        };
+        console.error(`Driver location rejected for user ${id}: ${result.code} (${result.status}).`);
+        if (typeof acknowledge === 'function') acknowledge(result);
+        else socket.emit('location-error', result);
+      }
     });
 
     // Chat messages

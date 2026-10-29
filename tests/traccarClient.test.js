@@ -126,10 +126,60 @@ describe('hosted Traccar REST and WebSocket connection', () => {
     ]);
     expect(requests.slice(-2).map(req => req.path)).toEqual(['/api/devices', '/api/positions']);
     expect(requests.slice(-2).every(req => req.cookie === 'JSESSIONID=test-session' && req.token === null)).toBe(true);
+    expect(console.log).toHaveBeenCalledWith('Traccar location poll started: fetching devices and latest positions.');
+    await until(() => expect(console.log).toHaveBeenCalledWith(
+      'Traccar location poll completed: {"devices":2,"positions":2,"stored":2,"duplicates":0,"ignored":0,"rejected":0,"unavailable":0,"ignoredReasons":{}}',
+    ));
     await until(() => expect(console.log).toHaveBeenCalledWith('Traccar live connection ready.'));
     polls[0][0]();
     await until(() => expect(ingestPosition).toHaveBeenCalledTimes(5));
     expect(requests.filter(req => req.path === '/api/session')).toHaveLength(1);
+  });
+
+  test('logs poll outcomes without logging tokens, cookies, or location payloads', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    positions = Array.from({ length: 4 }, (_, index) => ({ ...positions[0], id: 102 + index }));
+    ingestPosition
+      .mockResolvedValueOnce({ status: 201, body: { accepted: true } })
+      .mockResolvedValueOnce({ status: 200, body: { duplicate: true } })
+      .mockResolvedValueOnce({ status: 202, body: { ignored: 'no_active_trip' } })
+      .mockResolvedValueOnce({ status: 202, body: { ignored: 'position_before_trip' } });
+    interval.mock.calls.find(([, delay]) => delay === 60000)[0]();
+    const expected = 'Traccar location poll completed: {"devices":1,"positions":4,"stored":1,"duplicates":1,"ignored":2,"rejected":0,"unavailable":0,"ignoredReasons":{"no_active_trip":1,"position_before_trip":1}}';
+    await until(() => expect(console.log).toHaveBeenCalledWith(expected));
+    const logs = JSON.stringify(console.log.mock.calls);
+    expect(logs).not.toContain(env.TRACCAR_TOKEN);
+    expect(logs).not.toContain('JSESSIONID');
+    expect(logs).not.toContain('test-imei');
+    expect(logs).not.toContain('latitude');
+    expect(logs).not.toContain('longitude');
+  });
+
+  test('logs an empty poll instead of silently returning no positions', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    devices = [];
+    positions = [];
+    interval.mock.calls.find(([, delay]) => delay === 60000)[0]();
+    await until(() => expect(console.log).toHaveBeenCalledWith(
+      'Traccar location poll completed: {"devices":0,"positions":0,"stored":0,"duplicates":0,"ignored":0,"rejected":0,"unavailable":0,"ignoredReasons":{}}',
+    ));
+  });
+
+  test('includes rejected and inaccessible positions in poll summaries', async () => {
+    const interval = jest.spyOn(global, 'setInterval');
+    client = startTraccarClient({ env });
+    await until(() => expect(console.log).toHaveBeenCalledWith('Traccar location polling enabled (every 60 seconds).'));
+    positions = [{ ...positions[0], id: 102 }, { ...positions[0], id: 103, deviceId: 99 }];
+    ingestPosition.mockResolvedValueOnce({ status: 400, body: { error: 'Invalid coordinates.' } });
+    interval.mock.calls.find(([, delay]) => delay === 60000)[0]();
+    await until(() => expect(console.log).toHaveBeenCalledWith(
+      'Traccar location poll completed: {"devices":1,"positions":2,"stored":0,"duplicates":0,"ignored":0,"rejected":1,"unavailable":1,"ignoredReasons":{}}',
+    ));
+    expect(console.error).toHaveBeenCalledWith('Traccar position rejected: Invalid coordinates.');
   });
 
   test('does not overlap slow polls and queues live positions behind a running poll', async () => {
@@ -143,6 +193,7 @@ describe('hosted Traccar REST and WebSocket connection', () => {
     await until(() => expect(release).toBeDefined());
     poll();
     poll();
+    expect(console.warn).toHaveBeenCalledWith('Traccar location poll skipped: previous cycle is still queued or running.');
     broadcast({ positions: [{ ...positions[0], id: 104 }] });
     expect(ingestPosition).toHaveBeenCalledTimes(1);
     release();
@@ -160,6 +211,7 @@ describe('hosted Traccar REST and WebSocket connection', () => {
     positionsResponse = res => res.writeHead(401).end('{}');
     interval.mock.calls[pollIndex][0]();
     await until(() => expect(console.error).toHaveBeenCalledWith(expect.stringContaining('HTTP 401')));
+    expect(console.error).toHaveBeenCalledWith('Traccar location poll failed (HTTP 401).');
     expect(clear).toHaveBeenCalledWith(interval.mock.results[pollIndex].value);
     expect(JSON.stringify(console.error.mock.calls)).not.toContain(env.TRACCAR_TOKEN);
     positionsResponse = null;
@@ -297,6 +349,10 @@ describe('hosted Traccar REST and WebSocket connection', () => {
 
   test('stays disabled by default and rejects unsafe or incomplete enabled configuration', () => {
     client = startTraccarClient({ env: {} });
+    expect(console.log).toHaveBeenCalledWith('Traccar location polling disabled: set TRACCAR_ENABLED=true to enable.');
+    console.log.mockClear();
+    client = startTraccarClient({ env: { ...env, TRACCAR_ENABLED: 'false' } });
+    expect(console.log).toHaveBeenCalledWith('Traccar location polling disabled: set TRACCAR_ENABLED=true to enable.');
     expect(requests).toHaveLength(0);
     expect(() => startTraccarClient({ env: { ...env, TRACCAR_TOKEN: '' } })).toThrow('TRACCAR_TOKEN');
     expect(() => startTraccarClient({ env: { ...env, TRACCAR_URL: 'http://example.com' } })).toThrow('HTTPS');

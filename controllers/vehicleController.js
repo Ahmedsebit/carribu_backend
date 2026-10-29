@@ -1,9 +1,5 @@
 const { Vehicle, School, Route, User, Trip, TripLog, Student } = require('../models');
 const { Op } = require('sequelize');
-const normalizeTrackerUniqueId = value => {
-  if (value === null || value === undefined || value === '') return null;
-  return String(value).trim();
-};
 exports.getAll = async (req, res) => {
   try {
     const where = { schoolId: req.user.schoolId };
@@ -148,17 +144,14 @@ exports.getTripHistory = async (req, res) => {
 };
 exports.create = async (req, res) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'trackerUniqueId')) {
+      return res.status(403).json({ error: 'Only a super admin can manage tracker assignments.' });
+    }
     const plateNumber = String(req.body.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
     if (!plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
     const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: plateNumber } } });
     if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
-    const trackerUniqueId = normalizeTrackerUniqueId(req.body.trackerUniqueId);
-    if (trackerUniqueId?.length > 128) return res.status(400).json({ error: 'Tracker IMEI is too long.' });
-    if (trackerUniqueId) {
-      const trackerExists = await Vehicle.findOne({ where: { trackerUniqueId } });
-      if (trackerExists) return res.status(409).json({ error: 'This tracker IMEI is already assigned to a vehicle.' });
-    }
-    const vehicle = await Vehicle.create({ ...req.body, plateNumber, trackerUniqueId, schoolId: req.user.schoolId });
+    const vehicle = await Vehicle.create({ ...req.body, plateNumber, schoolId: req.user.schoolId });
     res.status(201).json({ message: 'Vehicle created.', vehicle });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'The plate number or tracker IMEI is already assigned.' });
@@ -167,6 +160,9 @@ exports.create = async (req, res) => {
 };
 exports.update = async (req, res) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'trackerUniqueId')) {
+      return res.status(403).json({ error: 'Only a super admin can manage tracker assignments.' });
+    }
     const vehicle = await Vehicle.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
     const updates = { ...req.body };
@@ -175,16 +171,6 @@ exports.update = async (req, res) => {
       if (!updates.plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
       const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: updates.plateNumber }, id: { [Op.ne]: vehicle.id } } });
       if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
-    }
-    if (Object.prototype.hasOwnProperty.call(updates, 'trackerUniqueId')) {
-      updates.trackerUniqueId = normalizeTrackerUniqueId(updates.trackerUniqueId);
-      if (updates.trackerUniqueId?.length > 128) return res.status(400).json({ error: 'Tracker IMEI is too long.' });
-      if (updates.trackerUniqueId) {
-        const trackerExists = await Vehicle.findOne({
-          where: { trackerUniqueId: updates.trackerUniqueId, id: { [Op.ne]: vehicle.id } },
-        });
-        if (trackerExists) return res.status(409).json({ error: 'This tracker IMEI is already assigned to a vehicle.' });
-      }
     }
     await vehicle.update(updates); res.json({ message: 'Vehicle updated.', vehicle });
   } catch (err) {
