@@ -1,5 +1,6 @@
 const { Vehicle, Trip, TrackerEvent } = require('../models');
 const { recordLocation } = require('./locationTracking');
+const { rememberTrackerPosition } = require('./trackerPositionSnapshot');
 
 const KNOTS_TO_KMH = 1.852;
 
@@ -30,7 +31,9 @@ async function resolveContext(device) {
 async function ingestPosition({ position, device } = {}) {
   const latitude = Number(position?.latitude);
   const longitude = Number(position?.longitude);
-  if (!position || !device || !Number.isFinite(latitude) || !Number.isFinite(longitude)
+  if (!position || !device || position.latitude == null || position.longitude == null
+    || position.latitude === '' || position.longitude === ''
+    || !Number.isFinite(latitude) || !Number.isFinite(longitude)
     || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
     return { status: 400, body: { error: 'Valid Traccar position and device payloads are required.' } };
   }
@@ -49,7 +52,24 @@ async function ingestPosition({ position, device } = {}) {
 
   const speedKnots = Number(position.speed);
   const heading = Number(position.course);
-  const recordedAt = parseDate(position.fixTime || position.deviceTime || position.serverTime);
+  const recordedAt = parseDate(position.fixTime || position.deviceTime || position.serverTime, null);
+  if (!recordedAt) {
+    return { status: 202, body: { accepted: true, ignored: 'invalid_position_time' } };
+  }
+  const values = {
+    lat: latitude,
+    lng: longitude,
+    speed: Number.isFinite(speedKnots) ? speedKnots * KNOTS_TO_KMH : null,
+    heading: Number.isFinite(heading) ? heading : null,
+    recordedAt,
+    trackerPositionId: parseOptionalId(position.id),
+  };
+  const remembered = await rememberTrackerPosition({
+    ...values, vehicleId: context.vehicle.id, trackerUniqueId: context.uniqueId,
+  });
+  if (!remembered) {
+    return { status: 202, body: { accepted: true, ignored: 'tracker_assignment_changed' } };
+  }
   if (context.trip.startedAt && recordedAt < new Date(context.trip.startedAt)) {
     return { status: 202, body: { accepted: true, ignored: 'position_before_trip' } };
   }
@@ -57,12 +77,7 @@ async function ingestPosition({ position, device } = {}) {
     trip: context.trip,
     schoolId: context.vehicle.schoolId,
     driverId: context.trip.driverId,
-    lat: latitude,
-    lng: longitude,
-    speed: Number.isFinite(speedKnots) ? speedKnots * KNOTS_TO_KMH : null,
-    heading: Number.isFinite(heading) ? heading : null,
-    recordedAt,
-    trackerPositionId: parseOptionalId(position.id),
+    ...values,
     source: 'traccar',
   });
 

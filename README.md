@@ -202,10 +202,23 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 The admin vehicle details page reads `GET /api/vehicles/:id/location` every
 10 seconds. This school-scoped endpoint returns the active trip, `locationSource`
 (`traccar` or `phone`), and its latest location with GPS timestamp. It returns
-`trip: null, location: null` outside active trips, or `location: null` while
-waiting for that trip's first fix from the authoritative source. Linked
-vehicles never fall back to phone positions. This adds no off-trip tracking,
-storage, or migration; the existing active-trip source migration remains required.
+`trip: null, location: null` outside active trips. Linked vehicles never fall
+back to phone positions. If no Traccar trip point exists, the endpoint can
+return the linked device's last-known snapshot, including one predating the
+trip. It retains the original `recordedAt`, sets `isLastKnown: true`, and marks
+`predatesTrip` when applicable. Admin vehicle details, Trips > Live, and active
+trip details show these snapshots with an explicit reference-only warning.
+
+Migration **0015-add-vehicle-tracker-positions** adds one durable snapshot per
+vehicle in `vehicle_tracker_positions`, separate from `bus_locations`.
+Snapshots are refreshed only for linked active vehicles with an active trip.
+Older reports cannot overwrite a newer fix for the same tracker. Assignment
+changes are rechecked under a vehicle row lock; snapshot reads also require
+the current tracker identifier. No new GPS time is fabricated when a position
+timestamp is missing or invalid. Unlinking or ending a trip hides the snapshot.
+Pre-trip snapshots do not enter trip history, Socket.IO location broadcasts,
+ETA calculations, or proximity notifications. Parent tracking is unchanged.
+Leave `DB_SYNC` unset so startup applies migration 0015 (and earlier migrations).
 
 ### Traccar-managed hosting (recommended)
 
@@ -257,7 +270,8 @@ deduplication handles repeated position/event IDs.
 REST initialization restores **latest positions**, not complete position or
 event history missed while disconnected. Events arrive live; historical
 backfill is not implemented. Positions older than the active trip's start
-are ignored so a stale snapshot is not attached to a new trip.
+are excluded from trip history, but retained separately for the admin's
+clearly labelled last-known location display during active trips.
 
 See the official [API overview](https://www.traccar.org/traccar-api/) and
 [API reference](https://www.traccar.org/api-reference/).
