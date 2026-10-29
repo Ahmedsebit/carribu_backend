@@ -208,6 +208,10 @@ return the linked device's last-known snapshot, including one predating the
 trip. It retains the original `recordedAt`, sets `isLastKnown: true`, and marks
 `predatesTrip` when applicable. Admin vehicle details, Trips > Live, and active
 trip details show these snapshots with an explicit reference-only warning.
+`GET /api/trips/:id/details` uses the same shared location lookup and returns
+the same snapshot metadata in `trip.location`, plus `trip.locationSource`.
+This keeps the trip-details API consistent with the Live modal. Completed-trip
+details use only that trip's recorded history, never a current vehicle snapshot.
 
 Migration **0015-add-vehicle-tracker-positions** adds one durable snapshot per
 vehicle in `vehicle_tracker_positions`, separate from `bus_locations`.
