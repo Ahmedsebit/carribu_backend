@@ -77,6 +77,10 @@ const options = {
             status: { type: 'string', enum: ['active', 'maintenance', 'retired'] },
             insuranceExpiry: { type: 'string', format: 'date' },
             lastServiceDate: { type: 'string', format: 'date', nullable: true },
+            trackerUniqueId: {
+              type: 'string', nullable: true, readOnly: true,
+              description: 'Assigned by a super admin through the dedicated vehicle tracker endpoint',
+            },
             createdAt: { type: 'string', format: 'date-time' },
             updatedAt: { type: 'string', format: 'date-time' },
           },

@@ -63,6 +63,7 @@ async function ingestPosition({ position, device } = {}) {
     heading: Number.isFinite(heading) ? heading : null,
     recordedAt,
     trackerPositionId: parseOptionalId(position.id),
+    source: 'traccar',
   });
 
   return {

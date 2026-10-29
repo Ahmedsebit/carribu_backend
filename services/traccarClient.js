@@ -35,7 +35,10 @@ function errorSummary(error) {
 
 function startTraccarClient({ io, env = process.env } = {}) {
   const config = readConfig(env);
-  if (!config) return { stop() {} };
+  if (!config) {
+    console.log('Traccar location polling disabled: set TRACCAR_ENABLED=true to enable.');
+    return { stop() {} };
+  }
 
   const http = axios.create({
     baseURL: config.baseURL,
@@ -112,6 +115,7 @@ function startTraccarClient({ io, env = process.env } = {}) {
       }
 
       async function processFrame(frame) {
+        const summary = { stored: 0, duplicates: 0, ignored: 0, rejected: 0, unavailable: 0, ignoredReasons: {} };
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {
           throw new Error('Invalid Traccar socket message.');
         }
@@ -128,9 +132,23 @@ function startTraccarClient({ io, env = process.env } = {}) {
           if (!current()) return;
           const device = await getDevice(position.deviceId);
           if (!current()) return;
-          if (!device) continue;
+          if (!device) {
+            summary.unavailable += 1;
+            continue;
+          }
           const result = await ingestPosition({ position, device });
-          if (result.status >= 400) console.error(`Traccar position rejected: ${result.body.error}`);
+          if (result.status >= 400) {
+            summary.rejected += 1;
+            console.error(`Traccar position rejected: ${result.body.error}`);
+          } else if (result.body.ignored) {
+            summary.ignored += 1;
+            const reason = result.body.ignored;
+            summary.ignoredReasons[reason] = (summary.ignoredReasons[reason] || 0) + 1;
+          } else if (result.body.duplicate) {
+            summary.duplicates += 1;
+          } else {
+            summary.stored += 1;
+          }
         }
         for (const event of frame.events || []) {
           if (!current()) return;
@@ -141,13 +159,19 @@ function startTraccarClient({ io, env = process.env } = {}) {
           const result = await ingestEvent({ event, device, position }, io);
           if (result.status >= 400) console.error(`Traccar event rejected: ${result.body.error}`);
         }
+        return summary;
       }
 
-      async function loadPositions() {
+      async function loadPositions(logPoll = false) {
         const positions = await get('positions');
         if (!current()) return;
         if (!Array.isArray(positions.data)) throw new Error('Invalid positions response.');
-        await processFrame({ positions: positions.data });
+        const summary = await processFrame({ positions: positions.data });
+        if (logPoll && current()) {
+          console.log(`Traccar location poll completed: ${JSON.stringify({
+            devices: state.devices.size, positions: positions.data.length, ...summary,
+          })}`);
+        }
       }
 
       const socketUrl = new URL('socket', config.baseURL);
@@ -169,14 +193,23 @@ function startTraccarClient({ io, env = process.env } = {}) {
           retryMs = 1000;
           console.log('Traccar live connection ready.');
           state.pollTimer = setInterval(() => {
-            if (!current() || state.polling) return;
+            if (!current()) return;
+            if (state.polling) {
+              console.warn('Traccar location poll skipped: previous cycle is still queued or running.');
+              return;
+            }
             state.polling = true;
             state.queue = state.queue.then(async () => {
               if (!current()) return;
+              console.log('Traccar location poll started: fetching devices and latest positions.');
               await loadDevices();
               if (!current()) return;
-              await loadPositions();
-            }).catch(error => reconnect(state, errorSummary(error)))
+              await loadPositions(true);
+            }).catch(error => {
+              if (!current()) return;
+              console.error(`Traccar location poll failed (${errorSummary(error)}).`);
+              reconnect(state, errorSummary(error));
+            })
               .finally(() => { state.polling = false; });
           }, POSITION_POLL_INTERVAL_MS);
           state.pollTimer.unref();

@@ -15,6 +15,7 @@ const {
   sortStudentsForTrip,
 } = require('../services/routeOrdering');
 const { getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
+const { getTripLocationWhere } = require('../services/locationTracking');
 
 // Helper: calculate ETA based on stops away (avg 3 min per stop)
 function estimateETA(stopsAway) {
@@ -195,7 +196,7 @@ exports.getDetails = async (req, res) => {
                   }],
                 }],
               },
-              { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model', 'capacity', 'color'] },
+              { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model', 'capacity', 'color', 'trackerUniqueId'] },
               { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
               {
                 model: TripLog,
@@ -259,8 +260,8 @@ exports.getDetails = async (req, res) => {
           const waitValues = pickupList.filter(student => student.waitSeconds != null).map(student => student.waitSeconds);
           const completedStops = pickupList.filter(student => ['on_bus', 'dropped_off', 'absent'].includes(student.status)).length;
           const latestLocation = await BusLocation.findOne({
-            where: { tripId: trip.id },
-            attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt'],
+            where: await getTripLocationWhere(trip),
+            attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
             order: [['recorded_at', 'DESC']],
           });
 
@@ -291,6 +292,7 @@ exports.getDetails = async (req, res) => {
                 speed: latestLocation.speed == null ? null : parseFloat(latestLocation.speed),
                 heading: latestLocation.heading == null ? null : parseFloat(latestLocation.heading),
                 recordedAt: latestLocation.recordedAt,
+                source: latestLocation.source,
               } : null,
               stats: {
                 totalStudents: pickupList.length,

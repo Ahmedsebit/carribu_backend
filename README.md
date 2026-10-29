@@ -228,6 +228,14 @@ This also works with your self-hosted Traccar instance: set `TRACCAR_ENABLED=tru
 `TRACCAR_URL` to its public HTTPS address, and `TRACCAR_TOKEN` to an account
 token from that instance, then redeploy the backend. The startup log
 `Traccar location polling enabled (every 60 seconds).` confirms the job started.
+Each cycle logs `Traccar location poll started` and `Traccar location poll completed`
+with counts of devices, returned positions, stored/duplicate/ignored/rejected
+positions, inaccessible devices, and ignored reasons (such as `no_active_trip`).
+No coordinates, tokens, or session cookies are included in these poll summaries.
+Slow-cycle skips and poll failures are also logged. If polling is disabled,
+startup explicitly logs `Traccar location polling disabled`.
+These are outgoing requests, so they do not appear in Express's incoming
+HTTP access logs.
 Fetching stored positions does not command the physical tracker to obtain
 a new GPS fix; an offline tracker may still return an old position. Existing
 active-trip and stale-position checks still apply.
@@ -260,22 +268,58 @@ the same value on the Traccar service through `FORWARD_HEADER` and
 
 ### Vehicle mapping and app behavior
 
-For either connection mode, assign the tracker IMEI to its Carribu vehicle
-before expecting positions:
+For either connection mode, a **super admin** assigns the tracker IMEI to its
+Carribu vehicle before expecting positions. In the super-admin app, open
+**Schools > school details > Vehicles** and choose **Link tracker** or
+**Change tracker**. School admins can view assignments but cannot change them.
 
 ```http
-PUT /api/vehicles/{vehicleId}
+PUT /api/super-admin/schools/{schoolId}/vehicles/{vehicleId}/tracker
 Authorization: Bearer <admin JWT>
 Content-Type: application/json
 
 {"trackerUniqueId":"123456789012345"}
 ```
 
+The example requires a super-admin JWT. Send `{"trackerUniqueId":null}` to
+unlink. Identifiers are trimmed and limited to 128 characters; one tracker
+cannot be assigned to multiple vehicles. The vehicle must belong to the
+specified school. The school-admin vehicle create/update endpoints reject
+`trackerUniqueId` with HTTP 403, even when clearing it. Other vehicle edits
+preserve the existing tracker assignment.
+
 Positions are attached to the mapped vehicle's current `in_progress` trip and
 feed the existing live map, ETA, proximity notifications, and Socket.IO
 updates. Unknown devices, invalid fixes, and positions received with no active
 trip are acknowledged but ignored so Traccar does not retry them indefinitely.
 Tracker alarms and status events are retained in `tracker_events`.
+
+### Authoritative trip location source
+
+During an active trip, a vehicle with a linked tracker uses **Traccar only**.
+Phone GPS cannot overwrite or supplement its live map, ETA, or active-trip
+history, even if the device is offline or has not produced a fix yet.
+Vehicles without a tracker continue to use their assigned driver's phone.
+Completed trips keep their originally recorded history.
+
+Both `POST /api/location/update` and the `driver-location` socket event
+enforce this policy server-side. Linked vehicles reject phone updates with
+HTTP/status `409` and code `TRACCAR_LOCATION_REQUIRED`; sockets return this
+in the acknowledgement or emit `location-error` for older clients.
+Socket phone updates for unlinked vehicles use the same validated persistence
+and broadcast path as REST. A caller cannot override the source in a payload.
+
+Driver active-trip responses include `locationSource` (`traccar` or `phone`)
+and the vehicle's `trackerUniqueId`. Updated driver apps stop phone location
+collection for linked vehicles and do not request GPS permissions for them.
+Stored locations, live map responses, and `location-update` events include
+`source`. Active-trip queries filter by that source, rather than showing an
+old phone position while waiting for device data.
+
+**Deployment:** migration `0014-add-location-source` adds `bus_locations.source`
+and labels existing positions with Traccar IDs as `traccar`. Remove
+`DB_SYNC=alter` (leave `DB_SYNC` unset) so normal startup migrations run and
+backfill existing data. The migration does not remove historical locations.
 
 ## Real-time (Socket.IO)
 

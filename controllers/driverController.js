@@ -2,6 +2,7 @@ const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('
 const { Op } = require('sequelize');
 const { checkDelayedTrips, checkMissedTrips } = require('../services/tripReminders');
 const { sortStudentsForTrip } = require('../services/routeOrdering');
+const { getLocationSource } = require('../services/locationTracking');
 
 // Summarize a single student's pickup timeline from a set of trip logs.
 // Returns the key event timestamps plus the wait between the bus arriving
@@ -56,11 +57,12 @@ exports.getMyTrips = async (req, res) => {
     const where = { [Op.and]: [mine, dateWhere] };
     const trips = await Trip.findAll({ where, subQuery: false, include: [
       { model: Route, as: 'route', attributes: ['id','name'], include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
-      { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
+      { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity','trackerUniqueId'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ], order: [['scheduled_date','ASC'],['created_at','ASC']] });
     const result = trips.map(trip => {
       const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
+      t.locationSource = t.vehicle ? getLocationSource(t.vehicle) : null;
       const orderedStudents = sortStudentsForTrip(students, t.type);
       t.pickupList = orderedStudents.map((s,idx) => {
         const sl = logs.filter(l => l.studentId === s.id);
@@ -112,11 +114,12 @@ exports.getActiveTrip = async (req, res) => {
       status: 'in_progress',
     }, include: [
       { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
-      { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
+      { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity','trackerUniqueId'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ]});
     if (!trip) return res.json({ activeTrip: null, message: 'No active trip.' });
     const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
+    t.locationSource = t.vehicle ? getLocationSource(t.vehicle) : null;
     const orderedStudents = sortStudentsForTrip(students, t.type);
     t.pickupList = orderedStudents.map((s,idx) => {
       const sl = logs.filter(l => l.studentId === s.id);

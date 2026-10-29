@@ -155,7 +155,7 @@ exports.getSchoolResources = async (req, res) => {
       }),
       Vehicle.findAll({
         where: { schoolId: school.id },
-        attributes: ['id', 'plateNumber', 'make', 'model', 'status'],
+        attributes: ['id', 'plateNumber', 'make', 'model', 'status', 'trackerUniqueId'],
         order: [['plateNumber', 'ASC']],
       }),
       Route.findAll({
@@ -197,6 +197,42 @@ exports.getSchoolResources = async (req, res) => {
       },
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.updateVehicleTracker = async (req, res) => {
+  try {
+    const schoolId = Number(req.params.schoolId);
+    const vehicleId = Number(req.params.vehicleId);
+    if (!Number.isSafeInteger(schoolId) || schoolId < 1
+      || !Number.isSafeInteger(vehicleId) || vehicleId < 1) {
+      return res.status(400).json({ error: 'Valid school and vehicle IDs are required.' });
+    }
+    if (!req.body || Array.isArray(req.body)
+      || !Object.prototype.hasOwnProperty.call(req.body, 'trackerUniqueId')
+      || (req.body.trackerUniqueId !== null && typeof req.body.trackerUniqueId !== 'string')
+      || Object.keys(req.body).some(key => key !== 'trackerUniqueId')) {
+      return res.status(400).json({ error: 'Provide only trackerUniqueId as a string, or null to unlink.' });
+    }
+    const trackerUniqueId = req.body.trackerUniqueId?.trim() || null;
+    if (trackerUniqueId?.length > 128) {
+      return res.status(400).json({ error: 'The tracker identifier must be 128 characters or fewer.' });
+    }
+    const vehicle = await Vehicle.findOne({ where: { id: vehicleId, schoolId } });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found in this school.' });
+    if (trackerUniqueId) {
+      const existing = await Vehicle.findOne({
+        where: { trackerUniqueId, id: { [Op.ne]: vehicle.id } },
+      });
+      if (existing) return res.status(409).json({ error: 'This tracker is already assigned to another vehicle.' });
+    }
+    await vehicle.update({ trackerUniqueId });
+    res.json({ message: trackerUniqueId ? 'GPS tracker linked.' : 'GPS tracker unlinked.', vehicle });
+  } catch (err) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ error: 'This tracker is already assigned to another vehicle.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.permanentlyDeleteSchool = async (req, res) => {

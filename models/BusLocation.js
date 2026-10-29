@@ -11,5 +11,6 @@ const BusLocation = sequelize.define('BusLocation', {
   heading: { type: DataTypes.DECIMAL(5,2) },
   recordedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW, field: 'recorded_at' },
   trackerPositionId: { type: DataTypes.BIGINT, allowNull: true, unique: true, field: 'tracker_position_id' },
+  source: { type: DataTypes.STRING(16), allowNull: false, defaultValue: 'phone', validate: { isIn: [['phone', 'traccar']] } },
 }, { tableName: 'bus_locations' });
 module.exports = BusLocation;
