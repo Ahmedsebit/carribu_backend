@@ -36,6 +36,7 @@ const driverController = require('../controllers/driverController');
 const app = express();
 app.use(express.json());
 app.use('/location', require('../routes/location'));
+app.use('/vehicles', require('../routes/vehicles'));
 const server = http.createServer(app);
 const io = initSocket(server);
 const secret = 'location-source-tests-only';
@@ -100,8 +101,12 @@ beforeEach(() => {
   };
   User.findByPk.mockResolvedValue({ id: 3, isActive: true, pickupLat: null, pickupLng: null });
   Vehicle.findByPk.mockResolvedValue(vehicle);
-  Vehicle.findOne.mockImplementation(async ({ where }) =>
-    where.trackerUniqueId === vehicle.trackerUniqueId && vehicle.status === 'active' ? vehicle : null);
+  Vehicle.findOne.mockImplementation(async ({ where }) => {
+    if (where.trackerUniqueId !== undefined) {
+      return where.trackerUniqueId === vehicle.trackerUniqueId && vehicle.status === 'active' ? vehicle : null;
+    }
+    return where.id === vehicle.id && where.schoolId === vehicle.schoolId ? vehicle : null;
+  });
   Trip.findByPk.mockResolvedValue(trip);
   Trip.findOne.mockImplementation(async ({ where, include = [] }) => {
     if (where.id != null && Number(where.id) !== trip.id) return null;
@@ -236,6 +241,26 @@ describe('authoritative active-trip location source', () => {
     const history = await request(app).get('/location/history/2').set('Authorization', `Bearer ${token()}`);
     expect(history.body.locations).toHaveLength(1);
     expect(history.body.locations[0].source).toBe('traccar');
+  });
+
+  test('shows an ingested Traccar fix on the admin vehicle map only while the trip is active', async () => {
+    const position = {
+      id: 700, latitude: -1.3, longitude: 36.9,
+      fixTime: '2026-10-28T08:05:00Z', speed: 0, course: 0, valid: true,
+    };
+    expect((await ingestPosition({ device: { uniqueId: 'device-id' }, position })).status).toBe(201);
+    const readLocation = () => request(app).get('/vehicles/1/location')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    const response = await readLocation();
+    expect(response.status).toBe(200);
+    expect(response.body.location).toMatchObject({
+      source: 'traccar', lat: -1.3, lng: 36.9, speed: 0, heading: 0,
+    });
+    trip.status = 'completed';
+    const ended = await readLocation();
+    expect(ended.status).toBe(200);
+    expect(ended.body).toEqual({ trip: null, location: null, locationSource: 'traccar' });
+    expect(locations).toHaveLength(1);
   });
 
   test('does not fall back to phone GPS while waiting for the first device fix', async () => {

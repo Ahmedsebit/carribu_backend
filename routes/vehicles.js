@@ -26,6 +26,32 @@ router.get('/:id/trip-history', authorize('school_admin', 'coordinator'), c.getT
 
 /**
  * @swagger
+ * /api/vehicles/{id}/location:
+ *   get:
+ *     summary: Get the vehicle's latest authoritative location during an active trip
+ *     description: School admins and coordinators only. Linked vehicles use Traccar without phone fallback. Returns null trip and location when no trip is active, or null location while waiting for a fix.
+ *     tags: [Vehicles]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *     responses:
+ *       200:
+ *         description: Active trip, locationSource (traccar or phone), and latest location (nullable)
+ *       400:
+ *         description: Invalid vehicle ID
+ *       403:
+ *         description: School admin or coordinator access required
+ *       404:
+ *         description: Vehicle not found in the user's school
+ */
+router.get('/:id/location', authorize('school_admin', 'coordinator'), c.getLocation);
+
+/**
+ * @swagger
  * /api/vehicles:
  *   get:
  *     summary: List all vehicles for the school

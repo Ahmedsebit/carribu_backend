@@ -185,6 +185,7 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 | POST | `/api/auth/login` | Login |
 | * | `/api/schools` | School CRUD |
 | * | `/api/vehicles` | Vehicle CRUD |
+| GET | `/api/vehicles/:id/location` | Latest authoritative location for the vehicle's active trip (school admin/coordinator only) |
 | * | `/api/students` | Student CRUD |
 | * | `/api/routes` | Route CRUD |
 | * | `/api/trips` | Trip management |
@@ -197,6 +198,14 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 | POST | `/tracker/event` | Receive a Traccar JSON event |
 
 ## Traccar GPS integration
+
+The admin vehicle details page reads `GET /api/vehicles/:id/location` every
+10 seconds. This school-scoped endpoint returns the active trip, `locationSource`
+(`traccar` or `phone`), and its latest location with GPS timestamp. It returns
+`trip: null, location: null` outside active trips, or `location: null` while
+waiting for that trip's first fix from the authoritative source. Linked
+vehicles never fall back to phone positions. This adds no off-trip tracking,
+storage, or migration; the existing active-trip source migration remains required.
 
 ### Traccar-managed hosting (recommended)
 

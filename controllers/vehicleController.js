@@ -1,5 +1,6 @@
-const { Vehicle, School, Route, User, Trip, TripLog, Student } = require('../models');
+const { Vehicle, School, Route, User, Trip, TripLog, Student, BusLocation } = require('../models');
 const { Op } = require('sequelize');
+const { getLocationSource, getTripLocationWhere } = require('../services/locationTracking');
 exports.getAll = async (req, res) => {
   try {
     const where = { schoolId: req.user.schoolId };
@@ -15,6 +16,50 @@ exports.getById = async (req, res) => {
     if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
     res.json({ vehicle });
   } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.getLocation = async (req, res) => {
+  try {
+    const vehicleId = Number(req.params.id);
+    if (!Number.isSafeInteger(vehicleId) || vehicleId < 1) {
+      return res.status(400).json({ error: 'A valid vehicle ID is required.' });
+    }
+    const vehicle = await Vehicle.findOne({
+      where: { id: vehicleId, schoolId: req.user.schoolId },
+      attributes: ['id', 'trackerUniqueId'],
+    });
+    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
+
+    const locationSource = getLocationSource(vehicle);
+    const trip = await Trip.findOne({
+      where: { vehicleId: vehicle.id, status: 'in_progress' },
+      include: [{
+        model: Route, as: 'route', where: { schoolId: req.user.schoolId },
+        attributes: ['id', 'name'], required: true,
+      }],
+      order: [['started_at', 'DESC']],
+    });
+    if (!trip) return res.json({ trip: null, location: null, locationSource });
+
+    const where = await getTripLocationWhere({ id: trip.id, status: trip.status, vehicle });
+    const location = await BusLocation.findOne({
+      where: { ...where, vehicleId: vehicle.id },
+      attributes: ['lat', 'lng', 'speed', 'heading', 'recordedAt', 'source'],
+      order: [['recorded_at', 'DESC']],
+    });
+    res.json({
+      trip: { id: trip.id, status: trip.status, route: trip.route },
+      locationSource,
+      location: location ? {
+        lat: parseFloat(location.lat),
+        lng: parseFloat(location.lng),
+        speed: location.speed == null ? null : parseFloat(location.speed),
+        heading: location.heading == null ? null : parseFloat(location.heading),
+        recordedAt: location.recordedAt,
+        source: location.source,
+      } : null,
+    });
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
 
 exports.getTripHistory = async (req, res) => {
