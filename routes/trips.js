@@ -33,6 +33,7 @@ router.use(authenticate); router.use(schoolTenancy);
 router.get('/', c.getAll);
 
 router.get('/:id/details', authorize('school_admin', 'coordinator'), c.getDetails);
+router.get('/:id/notifications', authorize('school_admin', 'coordinator'), c.getNotifications);
 
 /**
  * @swagger
@@ -145,6 +146,8 @@ router.put('/:id/acknowledge', authorize('school_admin','coordinator','driver'),
  *     responses:
  *       200:
  *         description: Trip ended
+ *       409:
+ *         description: Students remain unresolved or onboard, or the trip is not active
  *       404:
  *         description: Trip not found
  */
@@ -174,7 +177,13 @@ router.put('/:id/end', authorize('school_admin','coordinator','driver'), c.endTr
  *                 type: integer
  *               action:
  *                 type: string
- *                 enum: [picked_up, dropped_off, absent]
+ *                 enum: [arrived, check_in, check_out, absent]
+ *               phase:
+ *                 type: string
+ *                 enum: [pickup, dropoff]
+ *               idempotencyKey:
+ *                 type: string
+ *                 maxLength: 100
  *               lat:
  *                 type: number
  *                 format: double
@@ -184,8 +193,12 @@ router.put('/:id/end', authorize('school_admin','coordinator','driver'), c.endTr
  *               notes:
  *                 type: string
  *     responses:
+ *       200:
+ *         description: Duplicate action returned without creating another log or notification
  *       201:
  *         description: Action logged
+ *       409:
+ *         description: Invalid transition, unresolved boarding, or a conflicting idempotency key
  */
 router.post('/:id/log', authorize('school_admin','coordinator','driver'), c.logAction);
 

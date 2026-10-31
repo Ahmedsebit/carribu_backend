@@ -433,7 +433,8 @@ describe('Routes API', () => {
       student1.id,
       student2.id,
     ]);
-    expect(afternoon.pickupList.every(student => student.status === 'on_bus')).toBe(true);
+    expect(afternoon.pickupList.every(student => student.status === 'pending')).toBe(true);
+    expect(afternoon.phase).toBe('boarding');
     expect(afternoon.route.id).toBe(res.body.route.id);
     expect(school.id).toBeDefined();
   });

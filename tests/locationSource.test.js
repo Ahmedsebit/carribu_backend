@@ -101,10 +101,13 @@ beforeEach(() => {
     id: 2, routeId: 9, driverId: 3, vehicleId: 1, status: 'in_progress',
     startedAt: new Date('2026-10-28T08:00:00Z'), vehicle,
     route: { id: 9, name: 'Test route', schoolId: 4, students: [] }, logs: [],
+    plan: { version: 1, schoolId: 4, routeName: 'Test route', stops: [] },
     toJSON() { return { ...this }; },
   };
   User.findByPk.mockResolvedValue({ id: 3, isActive: true, pickupLat: null, pickupLng: null });
-  sequelize.transaction.mockImplementation(async callback => callback({ LOCK: { UPDATE: 'UPDATE' } }));
+  sequelize.transaction.mockImplementation(async callback => callback({
+    LOCK: { UPDATE: 'UPDATE' }, afterCommit: callback => callback(),
+  }));
   VehicleTrackerPosition.findByPk.mockImplementation(async () => snapshot);
   VehicleTrackerPosition.upsert.mockImplementation(async values => { snapshot = { ...values }; });
   VehicleTrackerPosition.findOne.mockImplementation(async ({ where }) => snapshot
@@ -295,7 +298,9 @@ describe('authoritative active-trip location source', () => {
     const details = await request(app).get('/trips/2/details')
       .set('Authorization', `Bearer ${token('school_admin')}`);
     expect(details.status).toBe(200);
-    expect(details.body.trip.location).toEqual(response.body.location);
+    expect(details.body.trip.location).toEqual({
+      ...response.body.location, ageSeconds: expect.any(Number),
+    });
     expect(details.body.trip.locationSource).toBe('traccar');
     const history = await request(app).get('/location/history/2')
       .set('Authorization', `Bearer ${token('school_admin')}`);
@@ -432,11 +437,12 @@ describe('authoritative active-trip location source', () => {
 
   test('the parent active-bus view and school-admin trip details select Traccar positions', async () => {
     locations.push({ tripId: 2, source: 'phone', lat: -2, lng: 37 });
-    Student.findAll.mockResolvedValueOnce([{
-      id: 5, firstName: 'Child', routes: [{
-        id: 9, name: 'Route', students: [], trips: [trip],
-      }],
-    }]);
+    Student.findAll.mockResolvedValueOnce([{ id: 5 }]);
+    Trip.findAll.mockResolvedValueOnce([trip]);
+    trip.plan.stops = [{
+      studentId: 5, parentId: 3, studentName: 'Child', firstName: 'Child',
+      pickup: { lat: -1.2, lng: 36.8 }, dropoff: { lat: -1.3, lng: 36.9 },
+    }];
     const parent = await request(app).get('/location/my-bus').set('Authorization', `Bearer ${token('parent')}`);
     expect(parent.status).toBe(200);
     expect(parent.body.activeBuses[0].location).toBeNull();

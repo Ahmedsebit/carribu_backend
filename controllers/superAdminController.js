@@ -265,7 +265,6 @@ exports.permanentlyDeleteSchoolResource = async (req, res) => {
 exports.endTrip = async (req, res) => {
   try {
     const trip = await endSchoolTrip(req.params.schoolId, req.params.tripId);
-    notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'completed' });
     res.json({ message: 'Trip completed.', trip });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });

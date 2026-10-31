@@ -56,6 +56,9 @@ async function ingestPosition({ position, device } = {}) {
   if (!recordedAt) {
     return { status: 202, body: { accepted: true, ignored: 'invalid_position_time' } };
   }
+  if (recordedAt.getTime() > Date.now() + 30000) {
+    return { status: 202, body: { accepted: true, ignored: 'position_time_in_future' } };
+  }
   const values = {
     lat: latitude,
     lng: longitude,
@@ -79,6 +82,7 @@ async function ingestPosition({ position, device } = {}) {
     driverId: context.trip.driverId,
     ...values,
     source: 'traccar',
+    trackerUniqueId: context.uniqueId,
   });
 
   return {

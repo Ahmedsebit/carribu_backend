@@ -64,7 +64,7 @@ describe('Trip start window', () => {
 
   test('rejects and marks a trip missed more than 20 minutes late', async () => {
     await Trip.update(
-      { status: 'completed', endedAt: new Date() },
+      { status: 'cancelled', endedAt: new Date() },
       { where: { status: 'in_progress' } }
     );
     const trip = await createTrip(Date.now() - 22 * 60 * 1000);

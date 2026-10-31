@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { lockSchool } = require('./tripWorkflow');
 const {
   sequelize,
   School,
@@ -129,6 +130,7 @@ const preserveOrDeleteParent = async (parentId, deletedSchoolId, transaction) =>
 };
 
 const deleteSchool = async (schoolId, confirmation) => sequelize.transaction(async transaction => {
+  await lockSchool(schoolId, transaction);
   const school = await School.findByPk(schoolId, {
     transaction,
     lock: transaction.LOCK.UPDATE,
@@ -224,6 +226,7 @@ const loadSchoolResource = async (schoolId, type, resourceId, transaction) => {
 
 const deleteSchoolResource = async (schoolId, type, resourceId, confirmation) =>
   sequelize.transaction(async transaction => {
+    await lockSchool(schoolId, transaction);
     const resource = await loadSchoolResource(schoolId, type, resourceId, transaction);
     if (!resource) {
       const error = new Error('Resource not found for this school.');
@@ -274,7 +277,10 @@ const deleteSchoolResource = async (schoolId, type, resourceId, confirmation) =>
         transaction,
       });
       blockActiveTrip(await findActiveTrip({
-        routeId: { [Op.in]: assignments.map(assignment => assignment.routeId) },
+        [Op.or]: [
+          { routeId: { [Op.in]: assignments.map(assignment => assignment.routeId) } },
+          { plan: { [Op.contains]: { schoolId: Number(schoolId), stops: [{ studentId: resource.id }] } } },
+        ],
       }, transaction));
       await deleteStudents([resource.id], transaction);
     }
@@ -292,7 +298,10 @@ const deleteSchoolResource = async (schoolId, type, resourceId, confirmation) =>
         transaction,
       });
       blockActiveTrip(await findActiveTrip({
-        routeId: { [Op.in]: assignments.map(assignment => assignment.routeId) },
+        [Op.or]: [
+          { routeId: { [Op.in]: assignments.map(assignment => assignment.routeId) } },
+          { plan: { [Op.contains]: { schoolId: Number(schoolId), stops: [{ parentId: resource.id }] } } },
+        ],
       }, transaction));
       await Message.destroy({
         where: {

@@ -123,3 +123,84 @@ async function sendPushToUser(userId, title, body, data = {}) {
 }
 
 module.exports = { sendPushToUser, isExpoToken };
+
+async function expoRequest(path, body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(`https://exp.host/--/api/v2/push/${path}`, {
+      method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`EXPO_HTTP_${response.status}`);
+    const json = await response.json();
+    if (!json.data) throw new Error('EXPO_INVALID_RESPONSE');
+    return json.data;
+  } finally { clearTimeout(timer); }
+}
+
+async function deliverOutboxPush(userId, title, body, data, previous = {}) {
+  const user = await User.findByPk(userId, { attributes: ['id', 'expoPushToken', 'fcmPushToken'] });
+  if (!user) return { account: { status: 'failed', error: 'USER_NOT_FOUND' } };
+  const results = { ...previous };
+  if (results.expo?.status === 'pending_receipt') {
+    try {
+      const receipts = await expoRequest('getReceipts', { ids: [results.expo.ticketId] });
+      const receipt = receipts[results.expo.ticketId];
+      if (receipt?.status === 'ok') results.expo = { status: 'accepted' };
+      else if (receipt?.status === 'error') {
+        results.expo = { status: 'retrying', error: receipt.details?.error || 'EXPO_RECEIPT_ERROR' };
+        if (receipt.details?.error === 'DeviceNotRegistered') {
+          await User.update({ expoPushToken: null }, { where: { id: user.id, expoPushToken: user.expoPushToken } });
+          results.expo.status = 'unregistered';
+        }
+      }
+    } catch (error) {
+      results.expo = { ...results.expo, error: 'EXPO_RECEIPT_UNAVAILABLE' };
+    }
+  } else if (isExpoToken(user.expoPushToken) && results.expo?.status !== 'accepted') {
+    try {
+      const ticket = await expoRequest('send', {
+        to: user.expoPushToken, title, body, data, sound: 'default', priority: 'high', channelId: 'default',
+      });
+      if (ticket.status === 'ok' && ticket.id) {
+        results.expo = { status: 'pending_receipt', ticketId: ticket.id };
+      } else {
+        const code = ticket.details?.error || 'EXPO_TICKET_ERROR';
+        results.expo = { status: 'retrying', error: code };
+        if (code === 'DeviceNotRegistered') {
+          await User.update({ expoPushToken: null }, { where: { id: user.id, expoPushToken: user.expoPushToken } });
+          results.expo.status = 'unregistered';
+        }
+      }
+    } catch (error) {
+      results.expo = { status: 'retrying', error: /^EXPO_HTTP_\d+$/.test(error.message) ? error.message : 'EXPO_UNAVAILABLE' };
+    }
+  }
+  if (user.fcmPushToken && results.fcm?.status !== 'accepted') {
+    const messaging = getFirebaseMessaging();
+    if (!messaging) results.fcm = { status: 'retrying', error: 'FCM_NOT_CONFIGURED' };
+    else {
+      try {
+        await messaging.send({
+          token: user.fcmPushToken, notification: { title, body }, data: toFcmData(data),
+          android: { priority: 'high', notification: { channelId: 'carribu_updates', sound: 'default' } },
+        });
+        results.fcm = { status: 'accepted' };
+      } catch (error) {
+        const code = error.code || 'FCM_UNAVAILABLE';
+        results.fcm = { status: 'retrying', error: code };
+        if (['messaging/invalid-registration-token', 'messaging/registration-token-not-registered'].includes(code)) {
+          await User.update({ fcmPushToken: null }, { where: { id: user.id, fcmPushToken: user.fcmPushToken } });
+          results.fcm.status = 'unregistered';
+        }
+      }
+    }
+  }
+  delete results.device;
+  if (!Object.keys(results).length) results.device = { status: 'unregistered', error: 'NO_REGISTERED_DEVICE' };
+  return results;
+}
+
+module.exports.deliverOutboxPush = deliverOutboxPush;

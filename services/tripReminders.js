@@ -95,7 +95,8 @@ async function checkDelayedTrips(now = Date.now(), extraWhere = {}) {
     if (startMs == null) continue;
     // Past the scheduled start but the start window has not lapsed yet.
     if (now > startMs && !isStartWindowLapsed(trip, now)) {
-      await trip.update({ status: 'delayed' });
+      const [changed] = await Trip.update({ status: 'delayed' }, { where: { id: trip.id, status: 'scheduled' } });
+      if (!changed) continue;
       if (trip.driverId) {
         const routeName = (trip.route && trip.route.name) || 'your route';
         const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
@@ -132,7 +133,10 @@ async function checkMissedTrips(now = Date.now(), extraWhere = {}) {
   const missed = [];
   for (const trip of trips) {
     if (!isStartWindowLapsed(trip, now)) continue;
-    await trip.update({ status: 'missed' });
+    const [changed] = await Trip.update({ status: 'missed' }, {
+      where: { id: trip.id, status: { [Op.in]: ['scheduled', 'delayed'] } },
+    });
+    if (!changed) continue;
     if (trip.driverId) {
       const routeName = (trip.route && trip.route.name) || 'your route';
       const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';

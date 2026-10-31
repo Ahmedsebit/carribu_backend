@@ -150,10 +150,10 @@ test('shows a matching last-known snapshot with its original pre-trip timestamp'
   });
   const response = await getLocation();
   expect(response.status).toBe(200);
-  expect(response.body.location).toEqual({
+  expect(response.body.location).toEqual(expect.objectContaining({
     lat: -1.3, lng: 36.8, speed: 0, heading: 0, recordedAt: '2026-10-29T07:00:00.000Z',
-    source: 'traccar', isLastKnown: true, predatesTrip: true,
-  });
+    source: 'traccar', isLastKnown: true, predatesTrip: true, isFresh: false,
+  }));
   expect(VehicleTrackerPosition.findOne).toHaveBeenCalledWith({
     where: { vehicleId: 12, trackerUniqueId: 'test-device' },
   });

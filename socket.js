@@ -13,6 +13,8 @@ const PUSH_TITLES = {
   'driver-approaching': '🚌 Driver Approaching',
   'driver-arrived': '📍 Bus Arrived',
   'student-picked-up': '✅ Picked Up',
+  'student-dropped-off': 'Student Dropped Off',
+  'trip-completed': 'Trip Completed',
   'new-message': '💬 New Message',
 };
 
@@ -106,7 +108,7 @@ function getIO() {
 
 // Emit notification to specific user
 function notifyUser(userId, event, data) {
-  if (io) io.to(`user:${userId}`).emit(event, data);
+  emitUser(userId, event, data);
   // Also deliver a phone tray push so parents/drivers are alerted when the
   // app is backgrounded or closed (socket Alerts only fire in the foreground).
   if (data && data.message && PUSH_TITLES[event]) {
@@ -114,9 +116,13 @@ function notifyUser(userId, event, data) {
   }
 }
 
+function emitUser(userId, event, data) {
+  if (io) io.to(`user:${userId}`).emit(event, data);
+}
+
 // Emit to all users in a trip room
 function notifyTrip(tripId, event, data) {
   if (io) io.to(`trip:${tripId}`).emit(event, data);
 }
 
-module.exports = { initSocket, getIO, notifyUser, notifyTrip };
+module.exports = { initSocket, getIO, notifyUser, notifyTrip, emitUser, PUSH_TITLES };

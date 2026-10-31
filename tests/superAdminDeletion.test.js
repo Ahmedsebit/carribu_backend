@@ -18,6 +18,7 @@ const {
   deleteSchoolResource,
 } = require('../services/superAdminDeletion');
 const { endSchoolTrip } = require('../services/superAdminTrips');
+const { logStudentAction } = require('../services/tripWorkflow');
 
 beforeAll(async () => {
   await setupTestDB();
@@ -35,7 +36,7 @@ describe('Super Admin permanent deletion', () => {
   });
 
   test('blocks deletion when a related trip is in progress', async () => {
-    const { school, route, driver, vehicle } = getTestData();
+    const { school, route, driver, vehicle, student1, student2 } = getTestData();
     const trip = await Trip.create({
       routeId: route.id,
       driverId: driver.id,
@@ -50,10 +51,16 @@ describe('Super Admin permanent deletion', () => {
     ).rejects.toMatchObject({ status: 409 });
     await expect(Route.findByPk(route.id)).resolves.not.toBeNull();
 
+    await expect(endSchoolTrip(school.id, trip.id)).rejects.toMatchObject({ status: 409 });
+    for (const student of [student1, student2]) {
+      await logStudentAction(trip.id, { id: driver.id, schoolId: school.id, role: 'driver' }, {
+        studentId: student.id, action: 'absent', phase: 'pickup',
+      });
+    }
     const endedTrip = await endSchoolTrip(school.id, trip.id);
     expect(endedTrip.status).toBe('completed');
     expect(endedTrip.endedAt).not.toBeNull();
-    await expect(endSchoolTrip(school.id, trip.id)).rejects.toMatchObject({ status: 400 });
+    await expect(endSchoolTrip(school.id, trip.id)).resolves.toMatchObject({ status: 'completed' });
   });
 
   test('cannot delete a resource owned by another school', async () => {

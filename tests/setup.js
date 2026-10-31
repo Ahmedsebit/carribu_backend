@@ -1,7 +1,7 @@
 /**
  * Test setup - initializes DB and seeds test data
  */
-const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, Trip } = require('../models');
+const { sequelize, School, User, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip } = require('../models');
 
 let testData = {};
 
@@ -114,6 +114,10 @@ async function setupTestDB() {
   await RouteStudent.bulkCreate([
     { routeId: route.id, studentId: student1.id, stopOrder: 1 },
     { routeId: route.id, studentId: student2.id, stopOrder: 2 },
+  ]);
+  await RouteWaypoint.bulkCreate([
+    { routeId: route.id, leg: 'outbound', orderIndex: 0, lat: -1.2641, lng: 36.8053, label: 'Start' },
+    { routeId: route.id, leg: 'outbound', orderIndex: 1, lat: -1.3, lng: 36.82, label: 'School' },
   ]);
 
   testData = { school, admin, driver, parent, parent2, vehicle, student1, student2, route };

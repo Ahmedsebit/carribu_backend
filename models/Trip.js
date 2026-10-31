@@ -13,5 +13,12 @@ const Trip = sequelize.define('Trip', {
   startedAt: { type: DataTypes.DATE, field: 'started_at' },
   endedAt: { type: DataTypes.DATE, field: 'ended_at' },
   notes: { type: DataTypes.TEXT },
-}, { tableName: 'trips' });
+  plan: { type: DataTypes.JSONB, allowNull: true },
+}, {
+  tableName: 'trips',
+  indexes: [
+    { name: 'trips_one_active_driver', unique: true, fields: ['driver_id'], where: { status: 'in_progress' } },
+    { name: 'trips_one_active_vehicle', unique: true, fields: ['vehicle_id'], where: { status: 'in_progress' } },
+  ],
+});
 module.exports = Trip;

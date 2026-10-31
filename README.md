@@ -159,6 +159,87 @@ Setting `DB_SYNC` (`alter`/`safe`/`force`) makes startup fall back to
 `sequelize.sync` and **skips migrations**. This is only for local
 experimentation; leave it unset so migrations manage the schema.
 
+## Authoritative trip workflow
+
+Trips freeze their ordered student roster, guardian contact details, school
+destination and pickup/drop-off coordinates **when started**, not when scheduled.
+Set the school's destination as the **last outbound route waypoint**. Starting
+requires an active driver/vehicle, an active school roster, valid stop coordinates,
+and sufficient vehicle capacity. Driver and vehicle assignments are exclusive
+across active trips; a student cannot travel on two active trips or repeat a
+completed journey of the same type on the same scheduled date.
+
+Morning trips resolve home pickups before school drop-offs. Afternoon trips
+require explicit school boarding or absence for every child before starting
+home drop-offs, in reversed stop order. A valid guardian drop-off location is
+used when configured; otherwise the pickup location is used. Arrival records
+do not advance the stop until boarding, absence or drop-off resolves it.
+Every role, including super admin, must resolve all students as dropped off or
+absent before completion. Active routes cannot be edited or deactivated.
+
+Driver and admin responses expose server-owned `phase`, `currentStop`, `nextStop`,
+`pickupList` and `canEnd`. Use these rather than calculating a separate itinerary.
+Student actions accept `phase: "pickup" | "dropoff"` and an `idempotencyKey`
+(maximum 100 characters), conventionally
+`<tripId>:<studentId>:<phase>:<action>`. Repeated starts, completions and matching
+actions are idempotent; reusing a key for another operation returns HTTP 409.
+
+Migration `0016` adds snapshots, log deduplication, partial unique assignment
+indexes and the transactional notification outbox. Leave `DB_SYNC` unset.
+The migration refuses overlapping active assignments without changing data:
+resolve those trips before deployment. Reversing this migration deletes the
+new snapshots/outbox and idempotency metadata; back up the database first.
+Pre-upgrade history cannot recover an immutable past roster. Existing active
+afternoon trips require explicit boarding reconciliation; a missing legacy
+snapshot is captured on the next workflow action or accepted GPS update.
+
+### Parent notifications and diagnostics
+
+Trip start, arrival, boarding, absence, drop-off and completion events save their
+in-app messages and outbox records in the same transaction as the trip action.
+Fresh authoritative GPS fixes also queue phase-aware ETA/near-stop warnings.
+Proximity and ETA are suppressed during afternoon boarding, for fixes older
+than 120 seconds, and for out-of-order positions. GPS allows at most 30 seconds
+of future clock skew. ETAs are straight-line estimates, not road-routing promises.
+Linked vehicles retain Traccar-only tracking with no phone fallback.
+
+The worker runs automatically after migrations, claims recoverable five-minute
+leases, retries failed submissions with backoff, and checks Expo receipts without
+resending accepted tickets. Stable event IDs allow clients to deduplicate
+at-least-once realtime delivery. Provider retries cannot guarantee exactly-once
+delivery to a handset. Late proximity alerts and revoked guardian/school access
+are cancelled; guardian reassignment takes effect in the next trip snapshot.
+
+`GET /api/trips/:id/notifications` is restricted to that school's admin or
+coordinator. It returns up to 200 recent event diagnostics, not parent message
+payloads, credentials or device tokens. `accepted` means provider acceptance,
+**not handset delivery or parent read**. `pending_receipt`, `retrying`,
+`unregistered`, `failed` and `cancelled` distinguish delivery outcomes. Push
+requires a registered Expo/FCM token; native FCM also requires the backend
+Firebase configuration described above. Device permissions and real-device
+delivery still need verification in the deployment environment.
+
+### Workflow regression checks
+
+The integration setup **recreates the database schema**. Use only a disposable
+local database named `carribu_workflow_*`; the new workflow/outbox/migration
+suites refuse other database names or a host other than `127.0.0.1`.
+Create that database and set its local credentials before running:
+
+```powershell
+$env:DB_NAME='carribu_workflow_local'
+$env:DB_HOST='127.0.0.1'
+$env:DB_PORT='5432'
+$env:DB_USER='postgres'
+$env:DB_PASSWORD='<local-password>'
+$env:NODE_ENV='test'
+$env:JWT_SECRET='workflow-test-only'
+npm test -- --runTestsByPath tests\tripPlan.test.js tests\tripWorkflow.test.js tests\tripWorkflowMigration.test.js tests\notificationOutbox.test.js tests\outboxPush.test.js
+```
+
+Keep database suites sequential (`--runInBand`, already set by `npm test`).
+Never point these tests at a deployed database or a database containing real data.
+
 ## API Documentation (Swagger)
 
 Interactive API documentation is available via Swagger UI:

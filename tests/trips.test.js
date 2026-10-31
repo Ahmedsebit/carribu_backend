@@ -206,12 +206,13 @@ describe('Trip Lifecycle', () => {
     ]));
   });
 
-  test('PUT /api/trips/:id/start - cannot start already started trip', async () => {
+  test('PUT /api/trips/:id/start - retrying an active trip start is idempotent', async () => {
     const res = await request(app)
       .put(`/api/trips/${tripId}/start`)
       .set('Authorization', `Bearer ${driverToken}`);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
   });
 
   test('POST /api/trips/:id/log - driver can mark arrived', async () => {
@@ -261,7 +262,22 @@ describe('Trip Lifecycle', () => {
     expect(res.body.log.action).toBe('absent');
   });
 
-  test('PUT /api/trips/:id/end - driver can end trip', async () => {
+  test('PUT /api/trips/:id/end - refuses completion until the onboard student is dropped off', async () => {
+    const res = await request(app)
+      .put(`/api/trips/${tripId}/end`)
+      .set('Authorization', `Bearer ${driverToken}`);
+    expect(res.status).toBe(409);
+  });
+
+  test('POST /api/trips/:id/log - driver records the school drop-off', async () => {
+    const res = await request(app)
+      .post(`/api/trips/${tripId}/log`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ studentId: getTestData().student1.id, action: 'check_out', phase: 'dropoff' });
+    expect(res.status).toBe(201);
+  });
+
+  test('PUT /api/trips/:id/end - driver can end a fully resolved trip', async () => {
     const res = await request(app)
       .put(`/api/trips/${tripId}/end`)
       .set('Authorization', `Bearer ${driverToken}`);
@@ -271,12 +287,13 @@ describe('Trip Lifecycle', () => {
     expect(res.body.trip.endedAt).toBeDefined();
   });
 
-  test('PUT /api/trips/:id/end - cannot end already completed trip', async () => {
+  test('PUT /api/trips/:id/end - completion retry is idempotent', async () => {
     const res = await request(app)
       .put(`/api/trips/${tripId}/end`)
       .set('Authorization', `Bearer ${driverToken}`);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
   });
 });
 

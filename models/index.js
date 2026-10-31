@@ -16,6 +16,7 @@ const Subscription = require('./Subscription');
 const ParentSchool = require('./ParentSchool');
 const TrackerEvent = require('./TrackerEvent');
 const VehicleTrackerPosition = require('./VehicleTrackerPosition');
+const NotificationOutbox = require('./NotificationOutbox');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -91,6 +92,10 @@ BusLocation.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 BusLocation.belongsTo(User, { foreignKey: 'driver_id', as: 'driver', onDelete: 'SET NULL' });
 TrackerEvent.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 TrackerEvent.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
+NotificationOutbox.belongsTo(Trip, { foreignKey: 'tripId', as: 'trip', onDelete: 'CASCADE' });
+NotificationOutbox.belongsTo(School, { foreignKey: 'schoolId', as: 'school', onDelete: 'CASCADE' });
+NotificationOutbox.belongsTo(User, { foreignKey: 'receiverId', as: 'receiver', onDelete: 'CASCADE' });
+NotificationOutbox.belongsTo(Message, { foreignKey: 'messageId', as: 'message', onDelete: 'SET NULL' });
 
 RouteStudent.belongsTo(Route, { foreignKey: 'route_id', as: 'route' });
 RouteStudent.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
@@ -101,4 +106,4 @@ AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
 
-module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, NotificationOutbox, AppVersion, AuditLog, Subscription };

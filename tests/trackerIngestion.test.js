@@ -45,7 +45,7 @@ describe('shared Traccar ingestion', () => {
     });
     expect(recordLocation).toHaveBeenCalledWith({
       trip, schoolId: 4, driverId: 3, lat: -1.2, lng: 36.8, speed: 18.52,
-      heading: 90, recordedAt: new Date(position.fixTime), trackerPositionId: '101', source: 'traccar',
+      heading: 90, recordedAt: new Date(position.fixTime), trackerPositionId: '101', source: 'traccar', trackerUniqueId: 'test-imei',
     });
     recordLocation.mockResolvedValue({ location: { id: 10 }, created: false });
     expect((await ingestPosition({ device, position })).body.duplicate).toBe(true);

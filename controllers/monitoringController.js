@@ -1,5 +1,23 @@
 const { Op, fn, col, literal } = require('sequelize');
 const { School, User, Vehicle, Student, Route, Trip, TripLog, AuditLog, Subscription, sequelize } = require('../models');
+const { getTripState } = require('../services/tripPlan');
+
+function tripSummary(trip, studentId) {
+  const value = trip.toJSON();
+  const state = value.plan ? getTripState(value) : null;
+  value.phase = state?.phase || (value.status === 'in_progress' ? 'reconciliation_required' : null);
+  value.canEnd = state?.canEnd || false;
+  value.studentStats = state?.stats || null;
+  if (value.plan && value.route) {
+    value.route.name = value.plan.routeName;
+    value.route.students = value.plan.stops.filter(stop => !studentId || stop.studentId === studentId).map(stop => ({
+      id: stop.studentId, admissionNumber: stop.admissionNumber, firstName: stop.firstName, lastName: stop.lastName,
+    }));
+  }
+  delete value.plan;
+  delete value.logs;
+  return value;
+}
 
 // --- Activity & Operations ---
 
@@ -37,10 +55,11 @@ exports.activeTrips = async (req, res) => {
         { model: Route, as: 'route', attributes: ['id', 'name', 'school_id'], include: [{ model: School, as: 'school', attributes: ['id', 'name'] }] },
         { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName', 'phone'] },
         { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
+        { model: TripLog, as: 'logs', separate: true },
       ],
       order: [['startedAt', 'DESC']],
     });
-    res.json({ activeTrips: trips, count: trips.length });
+    res.json({ activeTrips: trips.map(trip => tripSummary(trip)), count: trips.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
@@ -58,12 +77,16 @@ exports.tripHistory = async (req, res) => {
     const parsedStudentId = Number.parseInt(studentId, 10);
     const hasSchoolFilter = Number.isInteger(parsedSchoolId) && parsedSchoolId > 0;
     const hasStudentFilter = Number.isInteger(parsedStudentId) && parsedStudentId > 0;
-    const makeInclude = () => [
+    if (hasStudentFilter) where[Op.or] = [
+      { plan: { [Op.contains]: { stops: [{ studentId: parsedStudentId }] } } },
+      { plan: null, routeId: { [Op.in]: literal(`(SELECT route_id FROM route_students WHERE student_id = ${parsedStudentId})`) } },
+    ];
+    const makeInclude = (withLogs = false) => [
       {
         model: Route,
         as: 'route',
         attributes: ['id', 'name', 'school_id'],
-        required: hasSchoolFilter || hasStudentFilter,
+        required: hasSchoolFilter,
         where: hasSchoolFilter ? { schoolId: parsedSchoolId } : undefined,
         include: [
           { model: School, as: 'school', attributes: ['id', 'name'] },
@@ -72,17 +95,18 @@ exports.tripHistory = async (req, res) => {
             as: 'students',
             attributes: ['id', 'admissionNumber', 'firstName', 'lastName'],
             where: hasStudentFilter ? { id: parsedStudentId } : undefined,
-            required: hasStudentFilter,
+            required: false,
             through: { attributes: [] },
           },
         ],
       },
       { model: User, as: 'driver', attributes: ['id', 'firstName', 'lastName'] },
+      ...(withLogs ? [{ model: TripLog, as: 'logs', separate: true }] : []),
     ];
 
     const { count, rows: trips } = await Trip.findAndCountAll({
       where,
-      include: makeInclude(),
+      include: makeInclude(true),
       distinct: true,
       order: [['scheduledDate', 'DESC'], ['createdAt', 'DESC']],
       limit: parseInt(limit),
@@ -111,7 +135,7 @@ exports.tripHistory = async (req, res) => {
         })
       : [];
 
-    res.json({ trips, total: count, statusBreakdown: statusCounts, students });
+    res.json({ trips: trips.map(trip => tripSummary(trip, hasStudentFilter ? parsedStudentId : null)), total: count, statusBreakdown: statusCounts, students });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 

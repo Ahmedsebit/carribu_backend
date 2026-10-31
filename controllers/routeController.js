@@ -1,4 +1,5 @@
-const { Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip, TripLog } = require('../models');
+const { sequelize, Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip, TripLog } = require('../models');
+const { lockSchool } = require('../services/tripWorkflow');
 const { Op } = require('sequelize');
 const {
   getRouteStart,
@@ -198,83 +199,94 @@ exports.create = async (req, res) => {
 };
 exports.update = async (req, res) => {
   try {
-    const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
-    if (!route) return res.status(404).json({ error: 'Route not found.' });
-
+    const full = await sequelize.transaction(async transaction => {
+    await lockSchool(req.user.schoolId, transaction);
+    const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, transaction });
+    if (!route) throw Object.assign(new Error('Route not found.'), { status: 404 });
+    const active = await Trip.count({ where: { routeId: route.id, status: 'in_progress' }, transaction });
+    if (active) throw Object.assign(new Error('End the active trip before editing this route. Its trip plan is frozen.'), { status: 409 });
     const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
     const prevDriverId = route.driverId;
     const prevVehicleId = route.vehicleId;
-    await route.update(routeData);
+    await route.update(routeData, { transaction });
 
-    // Propagate a driver/vehicle change to this route's still-actionable trips
-    // so their snapshot stays in sync (the driver app also matches on the
-    // route's current driver, but keeping the snapshot correct keeps admin
-    // listings and parent notifications accurate).
+    // Scheduled assignments follow the route; started trips retain their snapshots.
     if (route.driverId !== prevDriverId || route.vehicleId !== prevVehicleId) {
       await Trip.update(
         { driverId: route.driverId, vehicleId: route.vehicleId },
-        { where: { routeId: route.id, status: ['scheduled', 'in_progress'] } }
+        { where: { routeId: route.id, status: ['scheduled', 'delayed'] }, transaction }
       );
     }
 
     // Replace outbound waypoints if provided
     if (outboundWaypoints) {
-      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'outbound' } });
+      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'outbound' }, transaction });
       if (outboundWaypoints.length > 0) {
         await RouteWaypoint.bulkCreate(outboundWaypoints.map((wp, i) => ({
           routeId: route.id, leg: 'outbound', orderIndex: i,
           lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
-        })));
+        })), { transaction });
       }
     }
 
     if (studentIds) {
-      const startPoint = outboundWaypoints?.[0] || await getRouteStart(route.id);
+      const startPoint = outboundWaypoints?.[0] || await getRouteStart(route.id, transaction);
       await replaceRouteStudentOrder(
         route.id,
         studentIds,
         startPoint,
-        req.user.schoolId
+        req.user.schoolId,
+        transaction
       );
     } else if (outboundWaypoints) {
       const assignments = await RouteStudent.findAll({
         where: { routeId: route.id },
         order: [['stopOrder', 'ASC']],
+        transaction,
       });
       await replaceRouteStudentOrder(
         route.id,
         assignments.map(assignment => assignment.studentId),
         outboundWaypoints[0] || null,
-        req.user.schoolId
+        req.user.schoolId,
+        transaction
       );
     }
 
     // Replace return waypoints if provided
     if (returnWaypoints) {
-      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'return' } });
+      await RouteWaypoint.destroy({ where: { routeId: route.id, leg: 'return' }, transaction });
       if (returnWaypoints.length > 0) {
         await RouteWaypoint.bulkCreate(returnWaypoints.map((wp, i) => ({
           routeId: route.id, leg: 'return', orderIndex: i,
           lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
-        })));
+        })), { transaction });
       }
     }
 
-    const full = await Route.findByPk(route.id, { include: [
+    return Route.findByPk(route.id, { transaction, include: [
       { model: Vehicle, as: 'vehicle' },
       { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },
       { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
+    });
     res.json({ message: 'Route updated.', route: orderRouteStudents(full) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
 exports.delete = async (req, res) => {
   try {
-    const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
-    if (!route) return res.status(404).json({ error: 'Route not found.' });
-    await route.update({ isActive: false }); res.json({ message: 'Route deactivated.' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    await sequelize.transaction(async transaction => {
+      await lockSchool(req.user.schoolId, transaction);
+      const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, transaction });
+      if (!route) throw Object.assign(new Error('Route not found.'), { status: 404 });
+      if (await Trip.count({ where: { routeId: route.id, status: 'in_progress' }, transaction })) {
+        throw Object.assign(new Error('End the active trip before deactivating this route.'), { status: 409 });
+      }
+      await route.update({ isActive: false }, { transaction });
+    });
+    res.json({ message: 'Route deactivated.' });
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
 
 // Suggest students who match route criteria (grades + proximity to waypoints)

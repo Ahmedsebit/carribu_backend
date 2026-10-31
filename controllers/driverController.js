@@ -1,24 +1,9 @@
-const { Trip, Route, Vehicle, User, Student, RouteStudent, TripLog } = require('../models');
+const { Trip, Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, TripLog } = require('../models');
 const { Op } = require('sequelize');
 const { checkDelayedTrips, checkMissedTrips } = require('../services/tripReminders');
-const { sortStudentsForTrip } = require('../services/routeOrdering');
 const { getLocationSource } = require('../services/locationTracking');
+const { getTripState } = require('../services/tripPlan');
 
-// Summarize a single student's pickup timeline from a set of trip logs.
-// Returns the key event timestamps plus the wait between the bus arriving
-// and the student actually being picked up (check_in).
-const summarizeStudent = (studentId, logs) => {
-  const sl = logs.filter(l => l.studentId === studentId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  const at = act => { const x = sl.find(l => l.action === act); return x ? x.timestamp : null; };
-  const arrivedAt = at('arrived'), pickedAt = at('check_in'), droppedAt = at('check_out'), absent = !!at('absent');
-  let status = 'pending';
-  if (absent) status = 'absent';
-  else if (droppedAt) status = 'dropped_off';
-  else if (pickedAt) status = 'on_bus';
-  else if (arrivedAt) status = 'arrived';
-  const waitSeconds = (arrivedAt && pickedAt) ? Math.max(0, Math.round((new Date(pickedAt) - new Date(arrivedAt)) / 1000)) : null;
-  return { arrivedAt, pickedAt, droppedAt, absent, status, waitSeconds };
-};
 const historySince = req => {
   const days = Math.min(parseInt(req.query.days, 10) || 30, 90);
   const since = new Date(); since.setDate(since.getDate() - days);
@@ -42,11 +27,7 @@ exports.getMyTrips = async (req, res) => {
     // 'missed', so the list reflects only currently actionable work.
     await checkDelayedTrips(Date.now(), { driverId: req.user.id });
     await checkMissedTrips(Date.now(), { driverId: req.user.id });
-    // A trip is "mine" if either its snapshot driverId matches me, or the
-    // trip's route is currently assigned to me. The route match keeps trips
-    // visible even when the snapshot is stale (e.g. the driver was assigned
-    // to the route after the trip was scheduled).
-    const mine = { [Op.or]: [{ driverId: req.user.id }, { '$route.driver_id$': req.user.id }] };
+    const mine = { driverId: req.user.id };
     // When a specific date is requested, match it exactly. Otherwise show all
     // current/upcoming work: scheduled trips from today onward plus any active trip,
     // so future-dated scheduled trips don't silently disappear.
@@ -61,19 +42,10 @@ exports.getMyTrips = async (req, res) => {
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ], order: [['scheduled_date','ASC'],['created_at','ASC']] });
     const result = trips.map(trip => {
-      const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
+      const t = trip.toJSON();
       t.locationSource = t.vehicle ? getLocationSource(t.vehicle) : null;
-      const orderedStudents = sortStudentsForTrip(students, t.type);
-      t.pickupList = orderedStudents.map((s,idx) => {
-        const sl = logs.filter(l => l.studentId === s.id);
-        let status = t.type === 'afternoon_dropoff' ? 'on_bus' : 'pending';
-        if (sl.find(l => l.action === 'absent')) status = 'absent';
-        else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
-        else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
-        else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
-        return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress || s.parent?.pickupAddress, dropoffLat: s.parent?.dropoffLat || s.parent?.pickupLat, dropoffLng: s.parent?.dropoffLng || s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
-      });
-      t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
+      Object.assign(t, getTripState(t));
+      t.nextPickup = t.currentStop;
       return t;
     });
     res.json({ trips: result, total: result.length });
@@ -89,9 +61,7 @@ exports.getTripHistory = async (req, res) => {
     ], order: [['scheduled_date','DESC'],['started_at','DESC']] });
     const result = trips.map(trip => {
       const t = trip.toJSON();
-      const students = sortStudentsForTrip(t.route?.students, t.type);
-      const logs = t.logs || [];
-      const pickupList = students.map((s,idx) => { const sum = summarizeStudent(s.id, logs); return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, ...sum }; });
+      const { pickupList } = getTripState(t);
       const stats = { total: pickupList.length, pickedUp: pickupList.filter(p => p.status==='on_bus'||p.status==='dropped_off').length, absent: pickupList.filter(p => p.status==='absent').length };
       const durationMinutes = (t.startedAt && t.endedAt) ? Math.round((new Date(t.endedAt)-new Date(t.startedAt))/60000) : null;
       return { id: t.id, scheduledDate: t.scheduledDate, type: t.type, status: t.status, startedAt: t.startedAt, endedAt: t.endedAt, durationMinutes, route: { id: t.route?.id, name: t.route?.name }, vehicle: t.vehicle, pickupList, stats };
@@ -101,37 +71,19 @@ exports.getTripHistory = async (req, res) => {
 };
 exports.getActiveTrip = async (req, res) => {
   try {
-    const assignedRoutes = await Route.findAll({
-      where: { driverId: req.user.id },
-      attributes: ['id'],
-    });
-    const assignedRouteIds = assignedRoutes.map(route => route.id);
     const trip = await Trip.findOne({ where: {
-      [Op.or]: [
-        { driverId: req.user.id },
-        { routeId: { [Op.in]: assignedRouteIds } },
-      ],
+      driverId: req.user.id,
       status: 'in_progress',
     }, include: [
-      { model: Route, as: 'route', include: [{ model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
+      { model: Route, as: 'route', include: [{ model: RouteWaypoint, as: 'routeWaypoints' }, { model: Student, as: 'students', through: { attributes: ['stopOrder'] }, include: [{ model: User, as: 'parent', attributes: ['id','firstName','lastName','phone','pickupAddress','pickupLat','pickupLng','dropoffAddress','dropoffLat','dropoffLng'] }] }] },
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity','trackerUniqueId'] },
       { model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName'] }] },
     ]});
     if (!trip) return res.json({ activeTrip: null, message: 'No active trip.' });
-    const t = trip.toJSON(); const students = t.route?.students || []; const logs = t.logs || [];
+    const t = trip.toJSON();
     t.locationSource = t.vehicle ? getLocationSource(t.vehicle) : null;
-    const orderedStudents = sortStudentsForTrip(students, t.type);
-    t.pickupList = orderedStudents.map((s,idx) => {
-      const sl = logs.filter(l => l.studentId === s.id);
-      let status = t.type === 'afternoon_dropoff' ? 'on_bus' : 'pending';
-      if (sl.find(l => l.action === 'absent')) status = 'absent';
-      else if (sl.find(l => l.action === 'check_out')) status = 'dropped_off';
-      else if (sl.find(l => l.action === 'check_in')) status = 'on_bus';
-      else if (sl.find(l => l.action === 'arrived')) status = 'arrived';
-      return { stopNumber: idx+1, studentId: s.id, studentName: `${s.firstName} ${s.lastName}`, grade: s.grade, pickupAddress: s.parent?.pickupAddress, pickupLat: s.parent?.pickupLat, pickupLng: s.parent?.pickupLng, dropoffAddress: s.parent?.dropoffAddress || s.parent?.pickupAddress, dropoffLat: s.parent?.dropoffLat || s.parent?.pickupLat, dropoffLng: s.parent?.dropoffLng || s.parent?.pickupLng, parentName: s.parent ? `${s.parent.firstName} ${s.parent.lastName}` : null, parentPhone: s.parent?.phone, parentId: s.parent?.id, status };
-    });
-    t.nextPickup = t.pickupList.find(s => s.status === 'pending') || null;
-    t.stats = { total: t.pickupList.length, onBus: t.pickupList.filter(s => s.status==='on_bus').length, droppedOff: t.pickupList.filter(s => s.status==='dropped_off').length, absent: t.pickupList.filter(s => s.status==='absent').length, pending: t.pickupList.filter(s => s.status==='pending').length, arrived: t.pickupList.filter(s => s.status==='arrived').length };
+    Object.assign(t, getTripState(t));
+    t.nextPickup = t.currentStop;
     res.json({ activeTrip: t });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

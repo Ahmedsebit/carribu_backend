@@ -89,8 +89,11 @@ if (require.main === module) {
 
       const { startTraccarClient } = require('./services/traccarClient');
       const traccar = startTraccarClient({ io });
+      const { startNotificationWorker, stopNotificationWorker } = require('./services/notificationOutbox');
+      startNotificationWorker();
       const stopTraccar = () => {
         traccar.stop();
+        stopNotificationWorker();
         process.exit(0);
       };
       process.once('SIGTERM', stopTraccar);
