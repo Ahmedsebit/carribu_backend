@@ -1,7 +1,7 @@
 const { Message, User, Trip, Route, Student, School, RouteStudent, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { notifyUser } = require('../socket');
-const { getActiveParentSchoolIds, getActiveParentIdsForSchool } = require('../utils/parentSchoolAccess');
+const { getActiveParentSchoolIds, getActiveParentIdsForSchool, hasActiveParentSchool } = require('../utils/parentSchoolAccess');
 
 const visibleToUser = userId => ({
   [Op.or]: [
@@ -51,10 +51,17 @@ exports.send = async (req, res) => {
     const { receiverId, content, messageType, tripId } = req.body;
     if (!receiverId || !content) return res.status(400).json({ error: 'receiverId and content required.' });
     const receiverWhere = { id: receiverId };
-    if (req.user.role !== 'parent') receiverWhere.schoolId = req.user.schoolId;
+    if (req.user.role !== 'parent') {
+      receiverWhere[Op.or] = [{ schoolId: req.user.schoolId }, { role: 'parent' }];
+    }
     const receiver = await User.findOne({ where: receiverWhere });
     if (!receiver) return res.status(404).json({ error: 'Receiver not found.' });
-    const msg = await Message.create({ schoolId: receiver.schoolId || req.user.schoolId, senderId: req.user.id, receiverId, content, messageType: messageType || 'text', tripId: tripId || null });
+    if (req.user.role !== 'parent' && receiver.role === 'parent'
+      && !await hasActiveParentSchool(receiver.id, req.user.schoolId)) {
+      return res.status(404).json({ error: 'Receiver not found.' });
+    }
+    const schoolId = req.user.role === 'parent' ? receiver.schoolId || req.user.schoolId : req.user.schoolId;
+    const msg = await Message.create({ schoolId, senderId: req.user.id, receiverId, content, messageType: messageType || 'text', tripId: tripId || null });
     const full = await Message.findByPk(msg.id, { include: [{ model: User, as: 'sender', attributes: ['id','firstName','lastName','role'] }, { model: User, as: 'receiver', attributes: ['id','firstName','lastName','role'] }] });
     res.status(201).json({ message: full });
   } catch (err) { res.status(500).json({ error: err.message }); }
