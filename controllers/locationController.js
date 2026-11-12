@@ -1,6 +1,6 @@
 const { BusLocation, Trip, Route, Vehicle, User, Student, TripLog, School } = require('../models');
 const { Op } = require('sequelize');
-const { recordDriverLocation, getTripLocationWhere } = require('../services/locationTracking');
+const { recordDriverLocation, getTripLocationWhere, getAdminTripLocation } = require('../services/locationTracking');
 const { getTripState, estimateStopETA, locationFreshness } = require('../services/tripPlan');
 const {
   getActiveParentSchoolIds,
@@ -92,7 +92,8 @@ exports.getMyChildBus = async (req, res) => {
       const state = getTripState(trip);
       const own = state.pickupList.filter(s => s.parentId === req.user.id && ownIds.has(s.studentId));
       if (!own.length) continue;
-      const latest = await BusLocation.findOne({ where: await getTripLocationWhere(trip), order: [['recorded_at', 'DESC']] });
+      const latest = await getAdminTripLocation(trip);
+      const location = latest?.isLastKnown ? { ...latest, isFresh: false } : latest;
       const pickupPhase = ['pickup', 'boarding'].includes(state.phase);
       const queue = state.pickupList.filter(s => pickupPhase
         ? ['pending', 'arrived_pickup'].includes(s.status) : ['on_bus', 'arrived_dropoff'].includes(s.status));
@@ -109,13 +110,10 @@ exports.getMyChildBus = async (req, res) => {
         tripId: trip.id, tripType: trip.type, phase: state.phase,
         routeName: trip.plan?.routeName || trip.route.name, routeSchool: trip.route.school?.name,
         vehicle: trip.vehicle, driver: trip.driver,
-        location: latest ? {
-          lat: Number(latest.lat), lng: Number(latest.lng), speed: latest.speed == null ? null : Number(latest.speed),
-          recordedAt: latest.recordedAt, source: latest.source, ...locationFreshness(latest.recordedAt),
-        } : null,
+        location,
         children: own.map(s => ({
           id: s.studentId, firstName: s.firstName, lastName: s.lastName, grade: s.grade, status: s.status,
-          eta: state.phase === 'boarding' ? null : estimateStopETA(state, s.studentId, latest),
+          eta: state.phase === 'boarding' || location?.isLastKnown ? null : estimateStopETA(state, s.studentId, location),
         })),
         pendingStops,
       });

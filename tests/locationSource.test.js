@@ -454,6 +454,82 @@ describe('authoritative active-trip location source', () => {
     }));
   });
 
+  const readParentBus = async () => {
+    Student.findAll.mockResolvedValue([{ id: 5 }]);
+    Trip.findAll.mockResolvedValue([trip]);
+    trip.type = 'morning_pickup';
+    trip.plan.stops = [{
+      studentId: 5, parentId: 3, studentName: 'Child', firstName: 'Child',
+      pickup: { lat: -1.2, lng: 36.8 }, dropoff: { lat: -1.3, lng: 36.9 },
+    }];
+    return request(app).get('/location/my-bus')
+      .set('Authorization', `Bearer ${token('parent')}`);
+  };
+
+  test.each([30_000, 180_000])('parent map shows a %i ms old pre-trip tracker fix as last known without ETA', async age => {
+    trip.startedAt = new Date(Date.now() - 10_000);
+    snapshot = {
+      vehicleId: 1, trackerUniqueId: 'device-id', lat: -1.3, lng: 36.9,
+      speed: 0, heading: 0, recordedAt: new Date(Date.now() - age),
+    };
+    const response = await readParentBus();
+    expect(response.status).toBe(200);
+    expect(response.body.activeBuses[0].location).toMatchObject({
+      lat: -1.3, lng: 36.9, source: 'traccar', isLastKnown: true,
+      predatesTrip: true, isFresh: false, recordedAt: snapshot.recordedAt.toISOString(),
+    });
+    expect(response.body.activeBuses[0].children[0].eta).toBeNull();
+    expect(locations).toEqual([]);
+    expect(BusLocation.create).not.toHaveBeenCalled();
+    expect(BusLocation.findOrCreate).not.toHaveBeenCalled();
+  });
+
+  test('a fresh in-trip tracker fix replaces the parent last-known fallback and enables ETA', async () => {
+    snapshot = {
+      vehicleId: 1, trackerUniqueId: 'device-id', lat: -2, lng: 37,
+      recordedAt: new Date(Date.now() - 180_000),
+    };
+    expect((await readParentBus()).body.activeBuses[0].location.isLastKnown).toBe(true);
+    locations.push({
+      tripId: 2, vehicleId: 1, source: 'traccar', lat: -1.2, lng: 36.8,
+      recordedAt: new Date(), speed: 30,
+    });
+    const response = await readParentBus();
+    expect(response.body.activeBuses[0].location).toMatchObject({
+      lat: -1.2, lng: 36.8, isLastKnown: false, isFresh: true, predatesTrip: false,
+    });
+    expect(response.body.activeBuses[0].children[0].eta).toMatchObject({ phase: 'pickup', totalMinutes: 1 });
+  });
+
+  test('parent fallback excludes a previous tracker assignment and unrelated phone positions', async () => {
+    snapshot = {
+      vehicleId: 1, trackerUniqueId: 'old-device', lat: -2, lng: 37,
+      recordedAt: new Date(),
+    };
+    locations.push({ tripId: 2, vehicleId: 1, source: 'phone', lat: -2, lng: 37, recordedAt: new Date() });
+    expect((await readParentBus()).body.activeBuses[0].location).toBeNull();
+    expect(VehicleTrackerPosition.findOne).toHaveBeenCalledWith({
+      where: { vehicleId: 1, trackerUniqueId: 'device-id' },
+    });
+  });
+
+  test('parent phone-GPS trips never use a tracker snapshot', async () => {
+    vehicle.trackerUniqueId = null;
+    snapshot = { vehicleId: 1, trackerUniqueId: 'device-id', lat: -2, lng: 37, recordedAt: new Date() };
+    expect((await readParentBus()).body.activeBuses[0].location).toBeNull();
+    expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+  });
+
+  test('parents without a child on the frozen trip roster cannot read tracker snapshots', async () => {
+    Student.findAll.mockResolvedValue([]);
+    Trip.findAll.mockResolvedValue([trip]);
+    const response = await request(app).get('/location/my-bus')
+      .set('Authorization', `Bearer ${token('parent')}`);
+    expect(response.body.activeBuses).toEqual([]);
+    expect(VehicleTrackerPosition.findOne).not.toHaveBeenCalled();
+    expect(BusLocation.findOne).not.toHaveBeenCalled();
+  });
+
   test('the driver active-trip response announces the device location source', async () => {
     const response = await invoke(driverController.getActiveTrip, { user: { id: 3 } });
     expect(response.status).toBe(200);
