@@ -5,7 +5,7 @@ const ONBOARD_STATES = new Set(['on_bus', 'arrived_dropoff']);
 const GPS_FRESHNESS_MS = 2 * 60 * 1000;
 
 function coordinate(value, limit) {
-  if (value == null || value === '') return null;
+  if (!['number', 'string'].includes(typeof value) || String(value).trim() === '') return null;
   const number = Number(value);
   return Number.isFinite(number) && Math.abs(number) <= limit ? number : null;
 }
@@ -15,7 +15,7 @@ function point(lat, lng, address) {
 }
 
 function validPoint(value) {
-  return value?.lat != null && value?.lng != null;
+  return coordinate(value?.lat, 90) != null && coordinate(value?.lng, 180) != null;
 }
 
 function buildTripPlan(trip, route, waypoints = [], { legacy = false } = {}) {
@@ -56,8 +56,8 @@ function buildTripPlan(trip, route, waypoints = [], { legacy = false } = {}) {
   };
 }
 
-function validateTripPlan(plan) {
-  if (!plan.stops.length) return 'Assign at least one student to this route.';
+function validateTripPlan(plan, { allowEmpty = false } = {}) {
+  if (!plan.stops.length && !allowEmpty) return 'Assign at least one student to this route.';
   if (!validPoint(plan.school)) return 'Set a valid final outbound route waypoint for the school destination.';
   const invalid = plan.stops.find(s => !s.parentId || !validPoint(s.pickup) || !validPoint(s.dropoff));
   return invalid ? `Set valid pickup/drop-off coordinates and a parent for ${invalid.studentName}.` : null;
@@ -110,7 +110,7 @@ function getTripState(trip, logs = trip.logs || []) {
     currentStop: stopDTO(queue[0]),
     nextStop: stopDTO(queue[1]),
     pickupList,
-    canEnd: pickupList.length > 0 && pickupList.every(s => TERMINAL_STATES.has(s.status)),
+    canEnd: pickupList.every(s => TERMINAL_STATES.has(s.status)),
     stats: {
       total: pickupList.length,
       pending: waiting.length,
@@ -178,6 +178,6 @@ function estimateStopETA(state, studentId, location, now = Date.now()) {
 }
 
 module.exports = {
-  buildTripPlan, validateTripPlan, getTripState, actionPhase, assertTransition,
+  buildTripPlan, validateTripPlan, validPoint, getTripState, actionPhase, assertTransition,
   locationFreshness, estimateStopETA, PICKUP_STATES, ONBOARD_STATES,
 };

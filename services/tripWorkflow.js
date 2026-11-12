@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const {
   sequelize, Trip, TripLog, Route, RouteWaypoint, Student, User, Vehicle, NotificationOutbox,
 } = require('../models');
-const { buildTripPlan, validateTripPlan, getTripState, actionPhase, assertTransition } = require('./tripPlan');
+const { buildTripPlan, validateTripPlan, validPoint, getTripState, actionPhase, assertTransition } = require('./tripPlan');
 const { enqueueNotification } = require('./notificationOutbox');
 const { notifyTrip } = require('../socket');
 const { isStartWindowEarly, isStartWindowLapsed, START_WINDOW_MINUTES, checkMissedTrips } = require('./tripReminders');
@@ -43,12 +43,16 @@ async function routeForPlan(routeId, transaction) {
 }
 
 async function ensureTripPlan(trip, transaction, starting = false) {
-  if (trip.plan) return trip.plan;
+  if (trip.plan && !starting) return trip.plan;
   const route = await routeForPlan(trip.routeId, transaction);
   if (!route) throw fail(404, 'Route not found.');
-  const plan = buildTripPlan(trip, route, route.routeWaypoints, { legacy: trip.status === 'completed' && !!trip.startedAt });
+  const plan = trip.plan ? { ...trip.plan } : buildTripPlan(trip, route, route.routeWaypoints, { legacy: trip.status === 'completed' && !!trip.startedAt });
   if (starting) {
-    const invalid = validateTripPlan(plan);
+    const hadStudents = plan.stops.length > 0;
+    const homePhase = trip.type === 'afternoon_dropoff' ? 'dropoff' : 'pickup';
+    plan.stops = plan.stops.filter(stop => validPoint(stop[homePhase]))
+      .map((stop, index) => ({ ...stop, stopNumber: index + 1 }));
+    const invalid = validateTripPlan(plan, { allowEmpty: hadStudents });
     if (invalid) throw fail(422, invalid);
     if (route.students.some(student => student.isActive === false || student.schoolId !== route.schoolId)) {
       throw fail(409, 'Every rostered student must be active and belong to this school.');
