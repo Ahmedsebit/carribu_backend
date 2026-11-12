@@ -404,6 +404,11 @@ exports.endTrip = async (req, res) => {
     res.json({ message: 'Trip completed. Parent notifications queued.', ...await workflow.completeTrip(req.params.id, req.user) });
   } catch (err) { workflowError(res, err); }
 };
+exports.cancelTrip = async (req, res) => {
+  try {
+    res.json({ message: 'Trip cancelled. Parent notifications queued.', ...await workflow.cancelTrip(req.params.id, req.user) });
+  } catch (err) { workflowError(res, err); }
+};
 exports.delete = async (req, res) => {
   try {
     const trip = await Trip.findByPk(req.params.id, { include: [{ model: Route, as: 'route', where: { schoolId: req.user.schoolId }, attributes: [] }] });

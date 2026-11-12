@@ -15,7 +15,7 @@ jest.mock('../services/tripReminders', () => ({
 
 const { sequelize, Trip, TripLog, Route, User, Vehicle } = require('../models');
 const { enqueueNotification } = require('../services/notificationOutbox');
-const { startTrip, completeTrip, logStudentAction } = require('../services/tripWorkflow');
+const { startTrip, completeTrip, cancelTrip, logStudentAction } = require('../services/tripWorkflow');
 const { buildTripPlan } = require('../services/tripPlan');
 
 const actor = { id: 3, schoolId: 1, role: 'driver' };
@@ -107,4 +107,67 @@ test('still rejects a missing school destination and a genuinely empty route', a
   await expect(startTrip(trip.id, actor)).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/school destination/) });
   route.students = [];
   await expect(startTrip(trip.id, actor)).rejects.toMatchObject({ status: 422, message: expect.stringMatching(/at least one student/) });
+});
+
+const admin = { id: 10, schoolId: 1, role: 'school_admin' };
+
+test('admin can cancel a started trip before boarding without inventing student outcomes', async () => {
+  trip.status = 'in_progress';
+  TripLog.findAll.mockResolvedValue([{ studentId: 1, action: 'arrived', phase: 'pickup', timestamp: new Date() }]);
+  const cancelled = await cancelTrip(trip.id, admin);
+  expect(cancelled.trip.status).toBe('cancelled');
+  expect(cancelled.trip.endedAt).toBeInstanceOf(Date);
+  expect(cancelled).toMatchObject({ duplicate: false, phase: 'cancelled', currentStop: null, nextStop: null, canEnd: false });
+  expect(cancelled.pickupList.map(student => student.status)).toEqual(['arrived_pickup', 'pending']);
+  expect(enqueueNotification).toHaveBeenCalledTimes(2);
+  expect(enqueueNotification.mock.calls[0][0]).toMatchObject({ event: 'trip-cancelled', key: 'cancelled' });
+  await expect(startTrip(trip.id, actor)).rejects.toMatchObject({ status: 409 });
+  await expect(completeTrip(trip.id, admin)).rejects.toMatchObject({ status: 409 });
+  await expect(logStudentAction(trip.id, actor, { studentId: 2, action: 'check_in' }))
+    .rejects.toMatchObject({ status: 409 });
+});
+
+test('cancellation retries do not duplicate updates or parent notifications', async () => {
+  trip.status = 'in_progress';
+  await cancelTrip(trip.id, admin);
+  const updates = trip.update.mock.calls.length;
+  expect((await cancelTrip(trip.id, admin)).duplicate).toBe(true);
+  expect(trip.update).toHaveBeenCalledTimes(updates);
+  expect(enqueueNotification).toHaveBeenCalledTimes(2);
+});
+
+test.each(['check_in', 'check_out'])('cancellation is blocked by any historical %s even if the student is no longer onboard', async action => {
+  trip.status = 'in_progress';
+  TripLog.findAll.mockResolvedValue([{ studentId: 999, action, timestamp: new Date() }]);
+  await expect(cancelTrip(trip.id, admin)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already boarded/) });
+  expect(trip.status).toBe('in_progress');
+  expect(enqueueNotification).not.toHaveBeenCalled();
+});
+
+test('legacy auto-boarded afternoon trips cannot be cancelled without boarding logs', async () => {
+  trip.status = 'in_progress';
+  trip.type = 'afternoon_dropoff';
+  trip.plan = buildTripPlan(trip, route, route.routeWaypoints, { legacy: true });
+  await expect(cancelTrip(trip.id, admin)).rejects.toMatchObject({ status: 409 });
+  expect(trip.update).not.toHaveBeenCalled();
+});
+
+test.each(['driver', 'coordinator', 'parent', 'super_admin'])('%s cannot cancel an active trip', async role => {
+  trip.status = 'in_progress';
+  await expect(cancelTrip(trip.id, { ...admin, role })).rejects.toMatchObject({ status: 403 });
+  expect(sequelize.transaction).not.toHaveBeenCalled();
+});
+
+test('cancellation preserves school tenancy', async () => {
+  trip.status = 'in_progress';
+  Route.findOne.mockResolvedValueOnce(null);
+  await expect(cancelTrip(trip.id, { ...admin, schoolId: 999 })).rejects.toMatchObject({ status: 404 });
+  expect(Route.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { id: trip.routeId, schoolId: 999 } }));
+  expect(trip.update).not.toHaveBeenCalled();
+});
+
+test.each(['scheduled', 'delayed', 'completed', 'missed'])('a %s trip cannot use active-trip cancellation', async status => {
+  trip.status = status;
+  await expect(cancelTrip(trip.id, admin)).rejects.toMatchObject({ status: 409 });
+  expect(trip.update).not.toHaveBeenCalled();
 });

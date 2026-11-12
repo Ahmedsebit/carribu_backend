@@ -5,12 +5,12 @@ const jwt = require('jsonwebtoken');
 const { io: connectClient } = require('socket.io-client');
 
 jest.mock('../models', () => ({
-  sequelize: { transaction: jest.fn() },
+  sequelize: { transaction: jest.fn(), query: jest.fn() },
   VehicleTrackerPosition: { findByPk: jest.fn(), findOne: jest.fn(), upsert: jest.fn() },
   BusLocation: { create: jest.fn(), findOrCreate: jest.fn(), findOne: jest.fn(), findAll: jest.fn() },
   Trip: { findOne: jest.fn(), findByPk: jest.fn(), findAll: jest.fn() },
   Vehicle: { findOne: jest.fn(), findByPk: jest.fn() },
-  Route: { findByPk: jest.fn(), findAll: jest.fn() },
+  Route: { findByPk: jest.fn(), findAll: jest.fn(), findOne: jest.fn() },
   User: { findByPk: jest.fn() },
   Student: { findOne: jest.fn(), findAll: jest.fn() },
   TripLog: { findAll: jest.fn() },
@@ -537,5 +537,30 @@ describe('authoritative active-trip location source', () => {
     vehicle.trackerUniqueId = null;
     const unlinked = await invoke(driverController.getActiveTrip, { user: { id: 3 } });
     expect(unlinked.body.activeTrip.locationSource).toBe('phone');
+  });
+
+  test('the school-admin cancellation endpoint ends an unboarded active trip and supports retries', async () => {
+    Route.findOne.mockResolvedValue(trip.route);
+    trip.update = jest.fn(async values => Object.assign(trip, values));
+    const cancel = () => request(app).put('/trips/2/cancel')
+      .set('Authorization', `Bearer ${token('school_admin')}`);
+    const response = await cancel();
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      message: 'Trip cancelled. Parent notifications queued.',
+      trip: { status: 'cancelled' }, phase: 'cancelled', canEnd: false, duplicate: false,
+    });
+    expect((await cancel()).body.duplicate).toBe(true);
+    expect(trip.update).toHaveBeenCalledTimes(1);
+    expect(sequelize.query).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock(:schoolId)', expect.objectContaining({
+      replacements: { schoolId: 4 },
+    }));
+  });
+
+  test.each(['driver', 'coordinator', 'parent', 'super_admin'])('the cancellation endpoint rejects %s access', async role => {
+    const response = await request(app).put('/trips/2/cancel')
+      .set('Authorization', `Bearer ${token(role)}`);
+    expect(response.status).toBe(403);
+    expect(Trip.findByPk).not.toHaveBeenCalled();
   });
 });

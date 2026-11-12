@@ -155,6 +155,30 @@ router.put('/:id/end', authorize('school_admin','coordinator','driver'), c.endTr
 
 /**
  * @swagger
+ * /api/trips/{id}/cancel:
+ *   put:
+ *     summary: School admin cancels an active trip before any student has boarded
+ *     tags: [Trips]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Trip cancelled or cancellation already recorded
+ *       403:
+ *         description: Only school admins can cancel trips
+ *       409:
+ *         description: The trip is not active or a student has already boarded
+ *       404:
+ *         description: Trip not found
+ */
+router.put('/:id/cancel', authorize('school_admin'), c.cancelTrip);
+
+/**
+ * @swagger
  * /api/trips/{id}/log:
  *   post:
  *     summary: Log a pickup or drop-off event for a student

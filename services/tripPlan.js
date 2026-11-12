@@ -106,11 +106,11 @@ function getTripState(trip, logs = trip.logs || []) {
     return { ...student, ...destination, phase: actionPhase, tripPhase: operationalPhase };
   };
   return {
-    phase: trip.status === 'completed' ? 'completed' : operationalPhase,
-    currentStop: stopDTO(queue[0]),
-    nextStop: stopDTO(queue[1]),
+    phase: ['completed', 'cancelled'].includes(trip.status) ? trip.status : operationalPhase,
+    currentStop: trip.status === 'cancelled' ? null : stopDTO(queue[0]),
+    nextStop: trip.status === 'cancelled' ? null : stopDTO(queue[1]),
     pickupList,
-    canEnd: pickupList.every(s => TERMINAL_STATES.has(s.status)),
+    canEnd: trip.status !== 'cancelled' && pickupList.every(s => TERMINAL_STATES.has(s.status)),
     stats: {
       total: pickupList.length,
       pending: waiting.length,

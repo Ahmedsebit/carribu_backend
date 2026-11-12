@@ -15,6 +15,7 @@ const PUSH_TITLES = {
   'student-picked-up': '✅ Picked Up',
   'student-dropped-off': 'Student Dropped Off',
   'trip-completed': 'Trip Completed',
+  'trip-cancelled': 'Trip Cancelled',
   'new-message': '💬 New Message',
 };
 

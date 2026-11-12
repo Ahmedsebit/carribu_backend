@@ -218,6 +218,29 @@ async function completeTrip(id, user) {
   });
 }
 
+async function cancelTrip(id, user) {
+  if (user.role !== 'school_admin') throw fail(403, 'Only school admins can cancel an active trip.');
+  return withTrip(id, user, async (trip, route, transaction) => {
+    if (trip.status === 'cancelled') return { trip, duplicate: true, ...getTripState(trip) };
+    if (trip.status !== 'in_progress') throw fail(409, 'Only an active trip can be cancelled.');
+    const plan = await ensureTripPlan(trip, transaction);
+    const logs = await TripLog.findAll({ where: { tripId: trip.id }, transaction });
+    if (logs.some(log => ['check_in', 'check_out'].includes(log.action))
+      || (plan.legacyAutoBoarded && plan.stops.length > 0)) {
+      throw fail(409, 'This trip cannot be cancelled because a student has already boarded. Record all student outcomes and end the trip instead.');
+    }
+    await trip.update({ status: 'cancelled', endedAt: new Date() }, { transaction });
+    for (const student of plan.stops) {
+      await enqueueNotification({
+        trip, student, event: 'trip-cancelled', key: 'cancelled',
+        message: `The trip for ${student.studentName} was cancelled before any students boarded.`,
+      }, transaction);
+    }
+    transaction.afterCommit(() => notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'cancelled' }));
+    return { trip, duplicate: false, ...getTripState(trip, logs) };
+  });
+}
+
 async function notificationDiagnostics(id, user) {
   const trip = await Trip.findByPk(id, { include: [{ model: Route, as: 'route', where: { schoolId: user.schoolId } }] });
   if (!trip) throw fail(404, 'Trip not found.');
@@ -229,4 +252,4 @@ async function notificationDiagnostics(id, user) {
   return { events };
 }
 
-module.exports = { startTrip, logStudentAction, completeTrip, notificationDiagnostics, ensureTripPlan, lockSchool };
+module.exports = { startTrip, logStudentAction, completeTrip, cancelTrip, notificationDiagnostics, ensureTripPlan, lockSchool };
