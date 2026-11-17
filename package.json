@@ -41,7 +41,9 @@
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "umzug": "^3.8.3",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "^3.2.0"
   },
   "devDependencies": {
     "@jest/globals": "^30.4.1",

@@ -240,6 +240,77 @@ npm test -- --runTestsByPath tests\tripPlan.test.js tests\tripWorkflow.test.js t
 Keep database suites sequential (`--runInBand`, already set by `npm test`).
 Never point these tests at a deployed database or a database containing real data.
 
+## Student file imports
+
+Student Management and Parent Management share **Import / Upload history**.
+The workflow validates the file, checks its columns, and validates every student
+row before any student or parent is changed. Review new students, proposed
+field changes, error rows and unchanged students, then confirm the valid rows.
+
+Supported files are UTF-8 comma-separated CSV, `.xls` and `.xlsx`, up to 5 MB
+and 5,000 data rows. Excel must contain exactly one non-empty worksheet.
+XLSX archives are also limited to 25 MB of expanded content.
+The first row contains headers; each subsequent non-empty row is one student.
+Use **Download template** in the import screen to obtain the CSV headers.
+
+| Columns | Rule |
+|---|---|
+| `Admission Number` | Required for every student; matched case-insensitively within the current school |
+| `First Name`, `Last Name` | Required, or use one `Student Name` column containing both parts |
+| `Grade` | Optional; omitting the column preserves the existing grade; an empty cell clears it |
+| `Parent Name`, `Parent Phone` | Optional pair of columns; both row values are required when either is populated |
+
+Headers also accept camelCase/snake_case spellings, `Admission No`,
+`Grade/Class`, `Class`, `Child Name`, `Child(ren)` and `Phone Number`.
+Unknown or duplicate columns block the file. The old multi-child/continuation
+layout without admission numbers is no longer accepted: give each student
+their own row and admission number. Formulas must be replaced with values.
+All rows with repeated admission numbers in the same file are marked as errors.
+Inactive students and ambiguous/inactive parent accounts require separate
+resolution before importing.
+
+Blank or omitted parent details preserve existing student-parent links.
+Supplied parent phones use the existing phone normalization (Kenyan local
+numbers default to `+254`). Existing parent accounts are matched by phone;
+their profile is not overwritten. The preview identifies whether confirming
+will create a parent account, link it to the school, or restore school access.
+New parents set their password through the app; no credentials are sent.
+
+API calls require a school administrator or coordinator token:
+
+1. `POST /api/import/preview` with multipart field `file` saves the original
+   file and validated row plan; returns `id`, `rows`, `counts` and `previewed`
+   status. Invalid file formats/columns return 400 with a `stage`.
+2. `POST /api/import/parents-students` with JSON `{ "importId": "<id>" }`
+   confirms that saved preview. Only its uploader can confirm it. Error rows
+   are skipped. Rows changed since preview become errors rather than silently
+   overwriting newer student data. Repeating confirmation returns the recorded
+   result without importing twice.
+3. `GET /api/import/history?page=1` lists school-scoped records, 20 per page.
+   `GET /api/import/:id` returns the saved row results, and
+   `GET /api/import/:id/download` downloads the exact original file.
+
+Migration **0017-add-student-imports** stores original files as PostgreSQL
+`BYTEA` and row results/counts as JSONB. Apply it using `npm run db:migrate`
+or normal server startup with `DB_SYNC` unset. Deploy backend and admin changes
+together: direct multipart confirmation is replaced by the saved-preview ID.
+History records the uploader, original filename, dates, status, total rows,
+students created/updated, error rows and unchanged rows. Previews are retained
+even without confirmation, explicitly labeled **Preview only**. Uploaded files
+contain student data: include this table in approved access, backup and
+retention procedures; files are not publicly served.
+
+Parsing checks do not need a database:
+
+```powershell
+npm test -- --runTestsByPath tests\studentImportParsing.test.js
+```
+
+`tests\studentImport.test.js` recreates schema and exercises real PostgreSQL
+transactions, savepoint rollback, history/downloads, tenant boundaries and
+concurrent confirmation. It requires a disposable local database named
+`carribu_imports_*` and `DB_HOST=127.0.0.1`; never use real school data.
+
 ## API Documentation (Swagger)
 
 Interactive API documentation is available via Swagger UI:
@@ -275,6 +346,11 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 | * | `/api/driver` | Driver-specific actions |
 | * | `/api/drivers` | Driver management |
 | * | `/api/parents` | Parent-specific actions |
+| POST | `/api/import/preview` | Validate CSV/Excel and save a preview |
+| POST | `/api/import/parents-students` | Confirm a saved preview by importId |
+| GET | `/api/import/history` | Paginated upload history for the school |
+| GET | `/api/import/:id` | Saved preview or import row results |
+| GET | `/api/import/:id/download` | Download the original uploaded file |
 | POST | `/tracker/position` | Receive a Traccar JSON position |
 | POST | `/tracker/event` | Receive a Traccar JSON event |
 

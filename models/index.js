@@ -17,6 +17,7 @@ const ParentSchool = require('./ParentSchool');
 const TrackerEvent = require('./TrackerEvent');
 const VehicleTrackerPosition = require('./VehicleTrackerPosition');
 const NotificationOutbox = require('./NotificationOutbox');
+const StudentImport = require('./StudentImport');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -105,5 +106,7 @@ AuditLog.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 
 Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
+StudentImport.belongsTo(School, { foreignKey: 'schoolId', as: 'school', onDelete: 'CASCADE' });
+StudentImport.belongsTo(User, { foreignKey: 'uploadedBy', as: 'uploader', onDelete: 'SET NULL' });
 
-module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, NotificationOutbox, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, StudentImport, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, NotificationOutbox, AppVersion, AuditLog, Subscription };
