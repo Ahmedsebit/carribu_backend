@@ -24,7 +24,8 @@ function buildTripPlan(trip, route, waypoints = [], { legacy = false } = {}) {
   const last = outbound[outbound.length - 1];
   const school = point(last?.lat, last?.lng, last?.label || 'School');
   const direction = trip.type === 'afternoon_dropoff' ? -1 : 1;
-  const students = [...(route.students || [])].sort((a, b) =>
+  const historical = Boolean(trip.startedAt || ['completed', 'cancelled', 'missed'].includes(trip.status));
+  const students = (route.students || []).filter(student => historical || student.isActive !== false).sort((a, b) =>
     direction * ((a.RouteStudent?.stopOrder || 0) - (b.RouteStudent?.stopOrder || 0)));
   return {
     version: 1,
@@ -46,7 +47,7 @@ function buildTripPlan(trip, route, waypoints = [], { legacy = false } = {}) {
         firstName: student.firstName,
         lastName: student.lastName,
         grade: student.grade,
-        parentId: parent?.id || null,
+        parentId: parent?.id || student.parentId || null,
         parentName: parent ? `${parent.firstName} ${parent.lastName}` : null,
         parentPhone: parent?.phone || null,
         pickup: trip.type === 'afternoon_dropoff' ? school : home,
@@ -88,10 +89,39 @@ function studentState(stop, logs, legacyAutoBoarded = false) {
   };
 }
 
-function getTripState(trip, logs = trip.logs || []) {
-  const plan = trip.plan || buildTripPlan(trip, trip.route || {}, trip.route?.routeWaypoints || [], {
+function buildPlanForTrip(trip, route = trip.route || {}, logs = trip.logs || []) {
+  const upcoming = ['scheduled', 'delayed'].includes(trip.status) && !trip.startedAt;
+  if (trip.plan && (!upcoming || !Array.isArray(route.students))) return trip.plan;
+  let students = route.students || [];
+  if (['completed', 'cancelled', 'missed'].includes(trip.status)) {
+    const ids = [...new Set(logs.map(log => log.studentId))];
+    students = ids.map(id => students.find(student => student.id === id)
+      || logs.find(log => log.studentId === id)?.student
+      || { id, firstName: 'Student', lastName: `#${id}` });
+  }
+  const waypoints = route.routeWaypoints || (trip.plan?.school ? [{
+    leg: 'outbound', orderIndex: 0, lat: trip.plan.school.lat, lng: trip.plan.school.lng, label: trip.plan.school.address,
+  }] : []);
+  return buildTripPlan(trip, { id: route.id, schoolId: route.schoolId, name: route.name, students }, waypoints, {
     legacy: trip.status === 'completed' && !!trip.startedAt,
   });
+}
+
+function historicalAttendance(trip, students = []) {
+  const logs = trip.logs || [];
+  const plan = buildPlanForTrip(trip, { ...trip.route, students }, logs);
+  const state = getTripState({ ...trip, plan }, logs);
+  const boarded = state.stats.onBus + state.stats.droppedOff;
+  return {
+    expected: state.stats.total, boarded, droppedOff: state.stats.droppedOff,
+    absent: state.stats.absent, notBoarded: state.stats.pending,
+    rosterSource: trip.plan && !(['scheduled', 'delayed'].includes(trip.status) && !trip.startedAt) ? 'trip_plan'
+      : ['completed', 'cancelled', 'missed'].includes(trip.status) ? 'recorded_logs' : 'current_route',
+  };
+}
+
+function getTripState(trip, logs = trip.logs || []) {
+  const plan = buildPlanForTrip(trip, trip.route || {}, logs);
   const pickupList = plan.stops.map(stop => studentState(stop, logs, plan.legacyAutoBoarded));
   const waiting = pickupList.filter(s => PICKUP_STATES.has(s.status));
   const onboard = pickupList.filter(s => ONBOARD_STATES.has(s.status));
@@ -179,5 +209,6 @@ function estimateStopETA(state, studentId, location, now = Date.now()) {
 
 module.exports = {
   buildTripPlan, validateTripPlan, validPoint, getTripState, actionPhase, assertTransition,
+  buildPlanForTrip, historicalAttendance,
   locationFreshness, estimateStopETA, PICKUP_STATES, ONBOARD_STATES,
 };

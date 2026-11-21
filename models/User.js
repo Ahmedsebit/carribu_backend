@@ -24,6 +24,7 @@ const User = sequelize.define('User', {
   fcmPushToken: { type: DataTypes.STRING(2048), field: 'fcm_push_token' },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' },
   mustSetPassword: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'must_set_password' },
+  authVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0, field: 'auth_version' },
 }, {
   tableName: 'users',
   indexes: [

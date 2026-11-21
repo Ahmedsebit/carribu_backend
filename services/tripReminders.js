@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
-const { Trip, Route } = require('../models');
+const { Trip, Route, Student, User, sequelize } = require('../models');
 const { notifyUser, notifyTrip } = require('../socket');
+const { buildTripPlan } = require('./tripPlan');
 
 // How many minutes before the scheduled start the driver is reminded.
 const LEAD_MINUTES = parseInt(process.env.TRIP_REMINDER_LEAD_MINUTES || '15', 10);
@@ -20,6 +21,10 @@ function tripStartMs(trip) {
   const [h, mi] = String(trip.scheduledTime).split(':').map(Number);
   if ([y, mo, d, h, mi].some((n) => Number.isNaN(n))) return null;
   return Date.UTC(y, mo - 1, d, h, mi) - OFFSET_HOURS * 3600 * 1000;
+}
+
+function schoolDate(now = Date.now()) {
+  return new Date(now + OFFSET_HOURS * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 // Find scheduled trips whose start is within the reminder window and that have
@@ -60,17 +65,74 @@ async function checkReminders(now = Date.now()) {
 }
 
 // True when a trip has an explicit start time whose window (start + grace) has
-// already lapsed at `now`. Trips without a scheduledTime can't be timed out.
+// already lapsed at `now`. Legacy untimed trips are restricted to their school date.
 function isStartWindowLapsed(trip, now = Date.now()) {
   const startMs = tripStartMs(trip);
-  if (startMs == null) return false;
+  if (startMs == null) return Boolean(trip.scheduledDate && trip.scheduledDate < schoolDate(now));
   return now > startMs + START_WINDOW_MINUTES * 60 * 1000;
 }
 
 function isStartWindowEarly(trip, now = Date.now()) {
   const startMs = tripStartMs(trip);
-  if (startMs == null) return false;
+  if (startMs == null) return Boolean(trip.scheduledDate && trip.scheduledDate > schoolDate(now));
   return now < startMs - START_WINDOW_MINUTES * 60 * 1000;
+}
+
+const disruptionRoute = {
+  model: Route, as: 'route', attributes: ['id', 'name', 'schoolId'],
+  include: [{
+    model: Student, as: 'students', required: false,
+    include: [{ model: User, as: 'parent', attributes: ['id', 'firstName', 'lastName', 'pickupAddress', 'pickupLat', 'pickupLng', 'dropoffAddress', 'dropoffLat', 'dropoffLng'] }],
+  }],
+};
+
+async function markDisruption(candidate, status, now) {
+  return sequelize.transaction(async transaction => {
+    // Load lazily because tripWorkflow also imports the start-window helpers.
+    if (candidate.route?.schoolId) await require('./tripWorkflow').lockSchool(candidate.route.schoolId, transaction);
+    const trip = await Trip.findByPk(candidate.id, {
+      include: [disruptionRoute], transaction, lock: { level: transaction.LOCK.UPDATE, of: Trip },
+    });
+    if (!trip || (status === 'delayed' ? trip.status !== 'scheduled' : !['scheduled', 'delayed'].includes(trip.status))) return null;
+    const start = tripStartMs(trip);
+    if (status === 'delayed' ? start == null || now <= start || isStartWindowLapsed(trip, now) : !isStartWindowLapsed(trip, now)) return null;
+    const route = trip.route;
+    let plan = trip.plan;
+    const planMatchesSchool = !plan || plan.schoolId == null || plan.schoolId === route?.schoolId;
+    if (route && planMatchesSchool && trip.scheduledDate === schoolDate(now)) {
+      const values = route.toJSON ? route.toJSON() : route;
+      plan = buildTripPlan(trip, {
+        ...values, students: (values.students || []).filter(student => student.schoolId === route.schoolId),
+      });
+      if (trip.plan?.school && trip.plan.schoolId === route.schoolId) plan.school = trip.plan.school;
+    }
+    await trip.update({ status, ...(plan ? { plan } : {}) }, { transaction });
+    const lateMinutes = start == null ? null : Math.max(0, Math.round((now - start) / 60000));
+    const recent = trip.scheduledDate === schoolDate(now) || start != null && now - start < 86400000;
+    if (recent && plan && route && plan.schoolId === route.schoolId) {
+      const { enqueueNotification } = require('./notificationOutbox');
+      const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
+      for (const student of plan.stops || []) {
+        await enqueueNotification({
+          trip, student, event: status === 'delayed' ? 'trip-delayed' : 'trip-missed', key: status,
+          message: status === 'delayed'
+            ? `The ${kind} for ${student.studentName} on ${route.name} has not started and is ${lateMinutes} min late. Contact the school if you need an update.`
+            : `The ${kind} for ${student.studentName} on ${route.name}, scheduled for ${trip.scheduledDate}, was not started within its allowed window. Please contact the school about alternative transport.`,
+          extra: { schoolId: route.schoolId, routeName: route.name, scheduledDate: trip.scheduledDate, scheduledTime: trip.scheduledTime, status, lateMinutes },
+        }, transaction);
+      }
+    }
+    transaction.afterCommit(() => {
+      if (trip.driverId) notifyUser(trip.driverId, status === 'delayed' ? 'trip-delayed' : 'trip-missed', {
+        tripId: trip.id, scheduledTime: trip.scheduledTime, lateMinutes,
+        message: status === 'delayed'
+          ? `Your trip on ${route?.name || 'your route'} is ${lateMinutes} min late. Start it within its allowed window.`
+          : `Your trip on ${route?.name || 'your route'} was not started within its allowed window.`,
+      });
+      notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status });
+    });
+    return trip;
+  });
 }
 
 // Mark scheduled trips as 'delayed' once their scheduled start time has passed
@@ -86,7 +148,7 @@ async function checkDelayedTrips(now = Date.now(), extraWhere = {}) {
       scheduledTime: { [Op.ne]: null },
       ...extraWhere,
     },
-    include: [{ model: Route, as: 'route', attributes: ['name'] }],
+    include: [{ model: Route, as: 'route', attributes: ['id', 'name', 'schoolId'] }],
   });
 
   const delayed = [];
@@ -95,21 +157,7 @@ async function checkDelayedTrips(now = Date.now(), extraWhere = {}) {
     if (startMs == null) continue;
     // Past the scheduled start but the start window has not lapsed yet.
     if (now > startMs && !isStartWindowLapsed(trip, now)) {
-      const [changed] = await Trip.update({ status: 'delayed' }, { where: { id: trip.id, status: 'scheduled' } });
-      if (!changed) continue;
-      if (trip.driverId) {
-        const routeName = (trip.route && trip.route.name) || 'your route';
-        const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
-        const lateMinutes = Math.max(0, Math.round((now - startMs) / 60000));
-        notifyUser(trip.driverId, 'trip-delayed', {
-          message: `Your ${kind} on ${routeName} is ${lateMinutes} min past its start time. Acknowledge and start it as soon as possible.`,
-          tripId: trip.id,
-          routeName,
-          scheduledTime: trip.scheduledTime,
-          lateMinutes,
-        });
-      }
-      notifyTrip(trip.id, 'trip-status', { tripId: trip.id, status: 'delayed' });
+      if (!await markDisruption(trip, 'delayed', now)) continue;
       delayed.push(trip.id);
     }
   }
@@ -124,29 +172,15 @@ async function checkMissedTrips(now = Date.now(), extraWhere = {}) {
   const trips = await Trip.findAll({
     where: {
       status: { [Op.in]: ['scheduled', 'delayed'] },
-      scheduledTime: { [Op.ne]: null },
       ...extraWhere,
     },
-    include: [{ model: Route, as: 'route', attributes: ['name'] }],
+    include: [{ model: Route, as: 'route', attributes: ['id', 'name', 'schoolId'] }],
   });
 
   const missed = [];
   for (const trip of trips) {
     if (!isStartWindowLapsed(trip, now)) continue;
-    const [changed] = await Trip.update({ status: 'missed' }, {
-      where: { id: trip.id, status: { [Op.in]: ['scheduled', 'delayed'] } },
-    });
-    if (!changed) continue;
-    if (trip.driverId) {
-      const routeName = (trip.route && trip.route.name) || 'your route';
-      const kind = trip.type === 'morning_pickup' ? 'morning pickup' : 'afternoon drop-off';
-      notifyUser(trip.driverId, 'trip-missed', {
-        message: `Your ${kind} on ${routeName} was not started in time and has been marked as missed.`,
-        tripId: trip.id,
-        routeName,
-        scheduledTime: trip.scheduledTime,
-      });
-    }
+    if (!await markDisruption(trip, 'missed', now)) continue;
     missed.push(trip.id);
   }
   return missed;
@@ -183,4 +217,5 @@ module.exports = {
   isStartWindowEarly,
   isStartWindowLapsed,
   tripStartMs,
+  schoolDate,
 };

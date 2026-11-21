@@ -1,10 +1,28 @@
 const { sequelize, Route, Vehicle, User, Student, RouteStudent, RouteWaypoint, Trip, TripLog } = require('../models');
-const { lockSchool } = require('../services/tripWorkflow');
+const { lockSchool, refreshFuturePlans } = require('../services/tripWorkflow');
+const { editableFields } = require('../utils/editableFields');
+const { historicalAttendance } = require('../services/tripPlan');
+const ROUTE_FIELDS = ['name', 'description', 'vehicleId', 'driverId', 'type', 'grades', 'departureTime', 'waypoints', 'isActive', 'studentIds', 'outboundWaypoints', 'returnWaypoints'];
 const { Op } = require('sequelize');
 const {
   getRouteStart,
   replaceRouteStudentOrder,
+  validateRouteStudentIds,
 } = require('../services/routeOrdering');
+
+async function validateAssignments(data, schoolId, transaction) {
+  for (const [field, model, extra] of [
+    ['vehicleId', Vehicle, {}], ['driverId', User, { role: 'driver' }],
+  ]) {
+    if (data[field] == null) continue;
+    const id = Number(data[field]);
+    if (!Number.isSafeInteger(id) || id < 1
+      || !await model.findOne({ where: { id, schoolId, ...extra }, attributes: ['id'], transaction })) {
+      throw Object.assign(new Error(`The assigned ${field === 'vehicleId' ? 'vehicle' : 'driver'} must belong to this school.`), { status: 400 });
+    }
+  }
+  if (data.studentIds !== undefined) await validateRouteStudentIds(data.studentIds, schoolId, transaction);
+}
 
 const orderRouteStudents = route => {
   const value = route.toJSON();
@@ -20,7 +38,7 @@ exports.getAll = async (req, res) => {
     const routes = await Route.findAll({ where: { schoolId: req.user.schoolId }, include: [
       { model: Vehicle, as: 'vehicle', attributes: ['id','plateNumber','make','model','capacity'] },
       { model: User, as: 'driver', attributes: ['id','firstName','lastName','phone'] },
-      { model: Student, as: 'students', attributes: ['id','firstName','lastName','grade'], through: { attributes: ['stopOrder'] } },
+      { model: Student, as: 'students', attributes: ['id','firstName','lastName','grade','isActive'], through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ], order: [['name','ASC']] });
     res.json({ routes: routes.map(orderRouteStudents), total: routes.length });
@@ -49,7 +67,7 @@ exports.getTripHistory = async (req, res) => {
         {
           model: Student,
           as: 'students',
-          attributes: ['id', 'firstName', 'lastName', 'grade'],
+          attributes: ['id', 'firstName', 'lastName', 'grade', 'isActive'],
           through: { attributes: ['stopOrder'] },
         },
       ],
@@ -74,12 +92,9 @@ exports.getTripHistory = async (req, res) => {
       order: [['scheduled_date', 'DESC'], ['started_at', 'DESC']],
     });
 
-    const expected = route.students?.length || 0;
     const trips = rows.map(row => {
       const trip = row.toJSON();
-      const boarded = new Set(trip.logs.filter(log => log.action === 'check_in').map(log => log.studentId)).size;
-      const droppedOff = new Set(trip.logs.filter(log => log.action === 'check_out').map(log => log.studentId)).size;
-      const absent = new Set(trip.logs.filter(log => log.action === 'absent').map(log => log.studentId)).size;
+      const attendance = historicalAttendance(trip, route.students);
       const durationMinutes = trip.startedAt && trip.endedAt
         ? Math.max(0, Math.round((new Date(trip.endedAt) - new Date(trip.startedAt)) / 60000))
         : null;
@@ -94,13 +109,7 @@ exports.getTripHistory = async (req, res) => {
         durationMinutes,
         vehicle: trip.vehicle,
         driver: trip.driver,
-        attendance: {
-          expected,
-          boarded,
-          droppedOff,
-          absent,
-          notBoarded: Math.max(0, expected - boarded - absent),
-        },
+        attendance,
       };
     });
 
@@ -159,8 +168,12 @@ exports.getTripHistory = async (req, res) => {
 };
 exports.create = async (req, res) => {
   try {
-    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
-    const route = await Route.create({ ...routeData, schoolId: req.user.schoolId });
+    const data = editableFields(req.body, ROUTE_FIELDS);
+    const full = await sequelize.transaction(async transaction => {
+    await lockSchool(req.user.schoolId, transaction);
+    await validateAssignments(data, req.user.schoolId, transaction);
+    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = data;
+    const route = await Route.create({ ...routeData, schoolId: req.user.schoolId }, { transaction });
 
     if (studentIds && studentIds.length > 0) {
       const startPoint = outboundWaypoints?.[0] || null;
@@ -168,7 +181,8 @@ exports.create = async (req, res) => {
         route.id,
         studentIds,
         startPoint,
-        req.user.schoolId
+        req.user.schoolId,
+        transaction
       );
     }
 
@@ -177,7 +191,7 @@ exports.create = async (req, res) => {
       await RouteWaypoint.bulkCreate(outboundWaypoints.map((wp, i) => ({
         routeId: route.id, leg: 'outbound', orderIndex: i,
         lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
-      })));
+      })), { transaction });
     }
 
     // Save return waypoints (B → A)
@@ -185,38 +199,33 @@ exports.create = async (req, res) => {
       await RouteWaypoint.bulkCreate(returnWaypoints.map((wp, i) => ({
         routeId: route.id, leg: 'return', orderIndex: i,
         lat: wp.lat, lng: wp.lng, label: wp.label || null, isStop: wp.isStop || false,
-      })));
+      })), { transaction });
     }
 
-    const full = await Route.findByPk(route.id, { include: [
+    return Route.findByPk(route.id, { transaction, include: [
       { model: Vehicle, as: 'vehicle' },
       { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },
       { model: Student, as: 'students', through: { attributes: ['stopOrder'] } },
       { model: RouteWaypoint, as: 'routeWaypoints', order: [['leg', 'ASC'], ['orderIndex', 'ASC']] },
     ]});
+    });
     res.status(201).json({ message: 'Route created.', route: orderRouteStudents(full) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
 exports.update = async (req, res) => {
   try {
+    const data = editableFields(req.body, ROUTE_FIELDS);
     const full = await sequelize.transaction(async transaction => {
     await lockSchool(req.user.schoolId, transaction);
     const route = await Route.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId }, transaction });
     if (!route) throw Object.assign(new Error('Route not found.'), { status: 404 });
     const active = await Trip.count({ where: { routeId: route.id, status: 'in_progress' }, transaction });
     if (active) throw Object.assign(new Error('End the active trip before editing this route. Its trip plan is frozen.'), { status: 409 });
-    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = req.body;
+    await validateAssignments(data, req.user.schoolId, transaction);
+    const { studentIds, outboundWaypoints, returnWaypoints, ...routeData } = data;
     const prevDriverId = route.driverId;
     const prevVehicleId = route.vehicleId;
     await route.update(routeData, { transaction });
-
-    // Scheduled assignments follow the route; started trips retain their snapshots.
-    if (route.driverId !== prevDriverId || route.vehicleId !== prevVehicleId) {
-      await Trip.update(
-        { driverId: route.driverId, vehicleId: route.vehicleId },
-        { where: { routeId: route.id, status: ['scheduled', 'delayed'] }, transaction }
-      );
-    }
 
     // Replace outbound waypoints if provided
     if (outboundWaypoints) {
@@ -264,6 +273,13 @@ exports.update = async (req, res) => {
       }
     }
 
+    const futureIds = await refreshFuturePlans(req.user.schoolId, { routeId: route.id }, transaction);
+    if (futureIds.length && (route.driverId !== prevDriverId || route.vehicleId !== prevVehicleId)) {
+      await Trip.update(
+        { driverId: route.driverId, vehicleId: route.vehicleId },
+        { where: { id: { [Op.in]: futureIds }, status: ['scheduled', 'delayed'], startedAt: null }, transaction }
+      );
+    }
     return Route.findByPk(route.id, { transaction, include: [
       { model: Vehicle, as: 'vehicle' },
       { model: User, as: 'driver', attributes: { exclude: ['passwordHash'] } },

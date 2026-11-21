@@ -56,7 +56,7 @@ router.get('/:id', parentController.getParent);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email, password, firstName, lastName, phone]
+ *             required: [email, firstName, lastName, phone]
  *             properties:
  *               email:
  *                 type: string
@@ -80,6 +80,7 @@ router.get('/:id', parentController.getParent);
  *         description: Parent created
  */
 router.post('/', parentController.createParent);
+router.post('/:id/activation-invitation', parentController.issueActivationInvitation);
 
 /**
  * @swagger

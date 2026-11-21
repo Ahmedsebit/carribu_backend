@@ -5,6 +5,10 @@
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
+const { Trip } = require('../models');
+const { schoolDate } = require('../services/tripReminders');
+const currentTime = (minutes = 0) =>
+  new Date(Date.now() + 3 * 3600000 + minutes * 60000).toISOString().slice(11, 16);
 
 let adminToken, driverToken, parentToken;
 let tripId;
@@ -31,7 +35,7 @@ afterAll(async () => {
 describe('Trip Lifecycle', () => {
   test('POST /api/trips - admin can create a trip', async () => {
     const { route, driver, vehicle } = getTestData();
-    const today = new Date().toISOString().split('T')[0];
+    const today = schoolDate();
 
     const res = await request(app)
       .post('/api/trips')
@@ -42,6 +46,7 @@ describe('Trip Lifecycle', () => {
         vehicleId: vehicle.id,
         type: 'morning_pickup',
         scheduledDate: today,
+        scheduledTime: currentTime(),
       });
 
     expect(res.status).toBe(201);
@@ -52,7 +57,7 @@ describe('Trip Lifecycle', () => {
 
   test('POST /api/trips - rejects a second pickup for the same student and day', async () => {
     const { route } = getTestData();
-    const today = new Date().toISOString().split('T')[0];
+    const today = schoolDate();
 
     const res = await request(app)
       .post('/api/trips')
@@ -186,11 +191,11 @@ describe('Trip Lifecycle', () => {
 
   test('PUT /api/trips/:id/start - rejects students already assigned to an active trip', async () => {
     const { route } = getTestData();
-    const today = new Date().toISOString().split('T')[0];
+    const today = schoolDate();
     const created = await request(app)
       .post('/api/trips')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ routeId: route.id, type: 'afternoon_dropoff', scheduledDate: today });
+      .send({ routeId: route.id, type: 'afternoon_dropoff', scheduledDate: today, scheduledTime: currentTime(1) });
 
     expect(created.status).toBe(201);
     conflictingTripId = created.body.trip.id;
@@ -334,16 +339,12 @@ describe('DELETE /api/trips/:id', () => {
   });
 
   test('admin cannot delete a trip that is in progress', async () => {
-    const { route } = getTestData();
-    const created = await request(app)
-      .post('/api/trips')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ routeId: route.id, type: 'morning_pickup', scheduledDate: '2027-03-01' });
-    const inProgressTripId = created.body.trip.id;
-
-    await request(app)
-      .put(`/api/trips/${inProgressTripId}/start`)
-      .set('Authorization', `Bearer ${adminToken}`);
+    const { route, driver, vehicle } = getTestData();
+    const created = await Trip.create({
+      routeId: route.id, driverId: driver.id, vehicleId: vehicle.id, type: 'afternoon_dropoff',
+      scheduledDate: schoolDate(), status: 'in_progress', startedAt: new Date(),
+    });
+    const inProgressTripId = created.id;
 
     const res = await request(app)
       .delete(`/api/trips/${inProgressTripId}`)
@@ -351,6 +352,7 @@ describe('DELETE /api/trips/:id', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/in progress/i);
+    await created.destroy();
   });
 
   test('admin can delete a scheduled trip', async () => {

@@ -12,11 +12,16 @@
 const request = require('supertest');
 const app = require('../testApp');
 const { sequelize, School, User, Vehicle, Student, Route, RouteStudent } = require('../../models');
+const { schoolDate } = require('../../services/tripReminders');
 
 let school, adminToken, driverToken, parent1Token, parent2Token;
 let vehicleId, routeId, student1Id, student2Id, driverId, parent1Id, parent2Id;
 
 beforeAll(async () => {
+  if (process.env.CARRIBU_ISOLATED_E2E !== '1' || process.env.DB_HOST !== '127.0.0.1'
+    || !/^carribu_workflow_[a-z0-9_]+$/.test(process.env.DB_NAME || '')) {
+    throw new Error('Workflow journeys require an explicitly isolated local database.');
+  }
   await sequelize.authenticate();
   await sequelize.sync({ force: true });
 
@@ -70,7 +75,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Let Jest --forceExit handle cleanup
+  await sequelize.close();
 });
 
 describe('E2E: Complete Trip Workflow', () => {
@@ -124,6 +129,10 @@ describe('E2E: Complete Trip Workflow', () => {
         grades: ['Grade 3'],
         departureTime: '06:30',
         studentIds: [student1Id, student2Id],
+        outboundWaypoints: [
+          { lat: -1.2641, lng: 36.8053, label: 'Start' },
+          { lat: -1.3, lng: 36.82, label: 'School' },
+        ],
       });
 
     expect(res.status).toBe(201);
@@ -135,7 +144,7 @@ describe('E2E: Complete Trip Workflow', () => {
   let tripId;
 
   test('Step 4: Admin creates a scheduled trip', async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = schoolDate();
     const res = await request(app)
       .post('/api/trips')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -145,6 +154,7 @@ describe('E2E: Complete Trip Workflow', () => {
         vehicleId,
         type: 'morning_pickup',
         scheduledDate: today,
+        scheduledTime: new Date(Date.now() + 3 * 3600000 + 2 * 60000).toISOString().slice(11, 16),
       });
 
     expect(res.status).toBe(201);
@@ -228,6 +238,16 @@ describe('E2E: Complete Trip Workflow', () => {
       .send({ studentId: student2Id, action: 'check_in', lat: -1.2888, lng: 36.7845 });
 
     expect(res.status).toBe(201);
+  });
+
+  test('Step 11b: Driver records safe school drop-off for both boarded students', async () => {
+    for (const studentId of [student1Id, student2Id]) {
+      const res = await request(app)
+        .post(`/api/trips/${tripId}/log`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ studentId, action: 'check_out', phase: 'dropoff' });
+      expect(res.status).toBe(201);
+    }
   });
 
   test('Step 12: Driver ends the trip', async () => {
@@ -318,7 +338,7 @@ describe('E2E: Complete Trip Workflow', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.logs).toBeInstanceOf(Array);
-    expect(res.body.logs.length).toBe(4); // arrived+checkin for 2 students
+    expect(res.body.logs.length).toBe(6);
   });
 
   test('Step 20: Admin can view completed trip summary', async () => {

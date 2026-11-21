@@ -34,6 +34,7 @@ app.use('/api/students', require('./routes/students'));
 app.use('/api/routes', require('./routes/routes'));
 app.use('/api/trips', require('./routes/trips'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/absences', require('./routes/absences'));
 app.use('/api/location', require('./routes/location'));
 app.use('/api/driver', require('./routes/driver'));
 app.use('/api/parent', require('./routes/parent'));

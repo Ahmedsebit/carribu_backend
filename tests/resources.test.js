@@ -241,18 +241,21 @@ describe('Multi-school parent membership', () => {
       mustSetPassword: false,
     });
     const csv = [
-      'Parent Name,Phone Number,Child(ren),Grade/Class',
-      'Multi Parent,0722333444,Second School Child,Grade 4',
+      'Admission Number,First Name,Last Name,Grade,Parent Name,Parent Phone',
+      'MULTI-SCHOOL-01,Second,School Child,Grade 4,Multi Parent,0722333444',
     ].join('\n');
 
-    const res = await request(app)
-      .post('/api/import/parents-students')
+    const preview = await request(app)
+      .post('/api/import/preview')
       .set('Authorization', `Bearer ${adminToken}`)
       .attach('file', Buffer.from(csv), 'parents.csv');
 
-    expect(res.status).toBe(201);
-    expect(res.body.parentsCreated).toBe(0);
-    expect(res.body.parentsLinked).toBe(1);
+    expect(preview.status).toBe(200);
+    const res = await request(app).post('/api/import/parents-students')
+      .set('Authorization', `Bearer ${adminToken}`).send({ importId: preview.body.id });
+    expect(res.status).toBe(200);
+    expect(res.body.counts.studentsCreated).toBe(1);
+    expect(await User.count({ where: { role: 'parent', phone: parent.phone } })).toBe(1);
     const memberships = await ParentSchool.findAll({ where: { parentId: parent.id } });
     expect(memberships).toHaveLength(2);
     const importedStudent = await Student.findOne({

@@ -30,7 +30,7 @@ beforeEach(() => {
     update: jest.fn(async values => Object.assign(trip, values)),
   };
   route = {
-    id: 1, schoolId: 1, isActive: true, name: 'Route',
+    id: 1, schoolId: 1, isActive: true, name: 'Route', type: 'both',
     routeWaypoints: [{ leg: 'outbound', orderIndex: 0, lat: 4, lng: 32 }],
     students: [1, 2].map(id => ({
       id, schoolId: 1, isActive: true, firstName: 'Child', lastName: String(id),
@@ -45,6 +45,19 @@ beforeEach(() => {
   Route.findByPk.mockImplementation(async () => route);
   User.findOne.mockResolvedValue({ firstName: 'Test', lastName: 'Driver' });
   Vehicle.findOne.mockResolvedValue({ capacity: 1 });
+});
+
+test('inactive retained assignments do not block eligible students at departure', async () => {
+  route.students[0].isActive = false;
+  const started = await startTrip(trip.id, actor);
+  expect(started.pickupList.map(stop => stop.studentId)).toEqual([2]);
+  expect(route.students.map(student => student.id)).toEqual([1, 2]);
+});
+
+test('departure rechecks a route direction changed after scheduling', async () => {
+  route.type = 'afternoon';
+  await expect(startTrip(trip.id, actor)).rejects.toMatchObject({ status: 409 });
+  expect(trip.update).not.toHaveBeenCalled();
 });
 
 test.each([

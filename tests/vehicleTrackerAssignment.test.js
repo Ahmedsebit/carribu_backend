@@ -4,12 +4,13 @@ const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
 
 jest.mock('../models', () => ({
+  sequelize: { transaction: jest.fn(), query: jest.fn() },
   School: { findByPk: jest.fn() },
   User: { findByPk: jest.fn(), findAll: jest.fn() },
   ParentSchool: { findAll: jest.fn() },
   Student: { findAll: jest.fn() },
   Route: { findAll: jest.fn() },
-  Trip: { findAll: jest.fn() },
+  Trip: { findAll: jest.fn(), count: jest.fn() },
   Vehicle: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn() },
 }));
 jest.mock('../services/superAdminDeletion', () => ({
@@ -19,7 +20,7 @@ jest.mock('../services/superAdminTrips', () => ({ endSchoolTrip: jest.fn() }));
 jest.mock('../utils/email', () => ({ sendPasswordResetEmail: jest.fn() }));
 jest.mock('../socket', () => ({ notifyTrip: jest.fn() }));
 
-const { Vehicle, User, School, ParentSchool, Student, Route, Trip } = require('../models');
+const { sequelize, Vehicle, User, School, ParentSchool, Student, Route, Trip } = require('../models');
 const app = express();
 app.use(express.json());
 app.use('/api/super-admin', require('../routes/superAdmin'));
@@ -29,7 +30,10 @@ const endpoint = '/api/super-admin/schools/1/vehicles/12/tracker';
 const testSecret = 'vehicle-tracker-assignment-test-secret';
 let originalSecret;
 let vehicles;
-const token = role => jwt.sign({ id: 8, role, schoolId: 1 }, testSecret);
+const token = role => {
+  User.findByPk.mockResolvedValue({ id: 8, role, schoolId: 1, isActive: true });
+  return jwt.sign({ id: 8, role, schoolId: 1 }, testSecret);
+};
 const assign = (body, url = endpoint) => request(app).put(url)
   .set('Authorization', `Bearer ${token('super_admin')}`).send(body);
 
@@ -45,6 +49,8 @@ afterAll(() => {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  sequelize.transaction.mockImplementation(operation => operation({ LOCK: { UPDATE: 'UPDATE' } }));
+  Trip.count.mockResolvedValue(0);
   vehicles = [
     { id: 12, schoolId: 1, plateNumber: 'TEST 001', status: 'active', trackerUniqueId: 'old-device' },
     { id: 13, schoolId: 2, plateNumber: 'TEST 002', status: 'active', trackerUniqueId: 'other-school-device' },
@@ -55,7 +61,7 @@ beforeEach(() => {
       return this;
     }),
   }));
-  User.findByPk.mockResolvedValue({ id: 8, isActive: true });
+  User.findByPk.mockResolvedValue({ id: 8, role: 'super_admin', schoolId: 1, isActive: true });
   User.findAll.mockResolvedValue([]);
   School.findByPk.mockImplementation(async id => ({ id: Number(id), name: 'Test school' }));
   for (const model of [ParentSchool, Student, Route, Trip]) model.findAll.mockResolvedValue([]);
@@ -203,6 +209,6 @@ describe('super-admin-only tracker assignments', () => {
       .set('Authorization', `Bearer ${token('coordinator')}`).send({ capacity: 25 });
     expect(update.status).toBe(200);
     expect(vehicles[0].trackerUniqueId).toBe('old-device');
-    expect(vehicles[0].update).toHaveBeenCalledWith({ capacity: 25 });
+    expect(vehicles[0].update).toHaveBeenCalledWith({ capacity: 25 }, { transaction: expect.any(Object) });
   });
 });

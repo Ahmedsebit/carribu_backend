@@ -2,6 +2,9 @@ const crypto = require('crypto');
 const { User, ParentSchool, Student, School, Trip, Route, Vehicle, TripLog, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { normalizePhoneE164 } = require('../utils/phone');
+const { issueInvitation } = require('../services/parentActivation');
+const { getTripState } = require('../services/tripPlan');
+const { schoolDate, tripStartMs, checkDelayedTrips, checkMissedTrips } = require('../services/tripReminders');
 
 // Random placeholder hash for pending accounts; parents set their own password in the app
 const generatePlaceholderPassword = () => crypto.randomBytes(16).toString('hex');
@@ -85,6 +88,13 @@ exports.createParent = async (req, res) => {
     }
     const existing = matches[0];
     if (existing) {
+      if (existing.schoolId === null && !existing.mustSetPassword && !await ParentSchool.findOne({
+        where: { parentId: existing.id, isActive: true },
+      })) await existing.update({
+        mustSetPassword: true, authVersion: (existing.authVersion || 0) + 1,
+        expoPushToken: null, fcmPushToken: null,
+      });
+      if (existing.mustSetPassword && existing.phone !== normalizedPhone) await existing.update({ phone: normalizedPhone });
       const [membership, created] = await ParentSchool.findOrCreate({
         where: { parentId: existing.id, schoolId: req.user.schoolId },
         defaults: { isActive: true },
@@ -124,12 +134,19 @@ exports.createParent = async (req, res) => {
 
     res.status(201).json({
       parent: { ...parent.toJSON(), passwordHash: undefined },
-      message: 'Parent added. They can set their password in the app using their phone number.',
+      message: 'Parent added. Issue an activation invitation and share it after verifying the parent.',
     });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'A user with this email or phone number already exists' });
     res.status(500).json({ error: err.message });
   }
+};
+
+exports.issueActivationInvitation = async (req, res) => {
+  try {
+    const invitation = await issueInvitation(req.params.id, req.user);
+    res.status(201).json({ message: 'Share this single-use code only with the verified parent. It expires in 48 hours.', ...invitation });
+  } catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not issue activation invitation.' }); }
 };
 
 exports.updateParent = async (req, res) => {
@@ -338,23 +355,27 @@ const getParentTripFilters = async (parentId, query) => {
 // exposed on each trip for privacy.
 exports.getTripHistory = async (req, res) => {
   try {
-    const days = Math.min(parseInt(req.query.days, 10) || 30, 90);
-    const since = new Date(); since.setDate(since.getDate() - days);
-    const sinceStr = since.toISOString().split('T')[0];
+    const days = Math.max(1, Math.min(parseInt(req.query.days, 10) || 30, 90));
+    const sinceStr = schoolDate(Date.now() - days * 86400000);
 
     const { children, filters } = await getParentTripFilters(req.user.id, req.query);
     if (!children.length) return res.json({ trips: [], total: 0, filters });
 
-    const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
-    if (!routeIds.length) return res.json({ trips: [], total: 0, filters });
-
+    const childIds = children.map(child => child.id);
     const trips = await Trip.findAll({
-      where: { routeId: { [Op.in]: routeIds }, status: 'completed', scheduledDate: { [Op.gte]: sinceStr } },
+      where: {
+        status: { [Op.in]: ['completed', 'cancelled', 'missed'] }, scheduledDate: { [Op.gte]: sinceStr },
+        [Op.or]: [
+          ...childIds.map(studentId => ({ plan: { [Op.contains]: { stops: [{ studentId, parentId: req.user.id }] } } })),
+          { plan: null, '$logs.student_id$': { [Op.in]: childIds } },
+        ],
+      },
       include: [
         {
           model: Route,
           as: 'route',
           attributes: ['id', 'name', 'schoolId'],
+          where: { schoolId: { [Op.in]: [...new Set(children.map(child => child.schoolId))] } }, required: true,
           include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
         },
         { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
@@ -367,58 +388,62 @@ exports.getTripHistory = async (req, res) => {
     const result = trips.map(trip => {
       const t = trip.toJSON();
       const logs = t.logs || [];
-      const myChildren = children.filter(c => (c.routes || []).some(r => r.id === t.routeId));
+      if (t.plan?.schoolId != null && t.plan.schoolId !== t.route.schoolId) return null;
+      const myChildren = children.filter(child => child.schoolId === t.route.schoolId && (t.plan
+        ? t.plan.stops?.some(stop => stop.studentId === child.id && stop.parentId === req.user.id)
+        : logs.some(log => log.studentId === child.id)));
+      if (!myChildren.length) return null;
+      const state = getTripState(t, logs);
       const childRows = myChildren.map(c => {
         const sum = summarizeStudent(c.id, logs);
-        return { studentId: c.id, studentName: `${c.firstName} ${c.lastName}`, grade: c.grade, ...sum };
+        const stop = state.pickupList.find(student => student.studentId === c.id);
+        return { studentId: c.id, studentName: t.plan && stop?.studentName || `${c.firstName} ${c.lastName}`, grade: stop?.grade || c.grade,
+          ...sum, status: stop?.status || sum.status, waitSeconds: stop?.waitSeconds ?? sum.waitSeconds };
       });
       const durationMinutes = (t.startedAt && t.endedAt) ? Math.round((new Date(t.endedAt) - new Date(t.startedAt)) / 60000) : null;
       return {
         id: t.id, scheduledDate: t.scheduledDate, type: t.type, status: t.status,
         startedAt: t.startedAt, endedAt: t.endedAt, durationMinutes,
-        route: { id: t.route?.id, name: t.route?.name },
+        rosterSource: t.plan ? 'trip_plan' : 'recorded_logs',
+        route: { id: t.route?.id, name: t.plan?.routeName || t.route?.name },
         school: t.route?.school || null,
         vehicle: t.vehicle,
         driver: t.driver ? { id: t.driver.id, name: `${t.driver.firstName} ${t.driver.lastName}`, phone: t.driver.phone } : null,
         children: childRows,
       };
-    });
+    }).filter(Boolean);
 
     res.json({ trips: result, total: result.length, filters });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// Format a Date using its local calendar day (avoids the UTC-shift bug of
-// toISOString(), which can land on the wrong day for timezones ahead of UTC).
-const toLocalDateStr = (d) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
-// Self-service: scheduled trips (default the next 1 day, i.e. "tomorrow")
+// Self-service: scheduled trips starting today in the school's local calendar.
 // that will carry the authenticated parent's children. Only the parent's
 // own children are exposed on each trip for privacy.
 exports.getUpcomingTrips = async (req, res) => {
   try {
     const days = Math.min(parseInt(req.query.days, 10) || 1, 14);
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const from = new Date(today); from.setDate(from.getDate() + 1);
-    const to = new Date(today); to.setDate(to.getDate() + days);
-    const fromStr = toLocalDateStr(from);
-    const toStr = toLocalDateStr(to);
+    const now = Date.now(), fromStr = schoolDate(now), toStr = schoolDate(now + (Math.max(1, days) - 1) * 86400000);
 
     const { children, filters } = await getParentTripFilters(req.user.id, req.query);
-    if (!children.length) return res.json({ trips: [], total: 0, filters });
+    if (!children.length) return res.json({ trips: [], total: 0, filters, schoolDate: fromStr });
 
     const routeIds = [...new Set(children.flatMap(c => (c.routes || []).map(r => r.id)))];
-    if (!routeIds.length) return res.json({ trips: [], total: 0, filters });
+    const includeDisruptions = req.query.includeDisruptions === 'true';
+    if (!routeIds.length && !includeDisruptions) return res.json({ trips: [], total: 0, filters, schoolDate: fromStr });
+    if (routeIds.length) {
+      await checkDelayedTrips(now, { routeId: { [Op.in]: routeIds } });
+      await checkMissedTrips(now, { routeId: { [Op.in]: routeIds } });
+    }
 
     const trips = await Trip.findAll({
       where: {
-        routeId: { [Op.in]: routeIds },
-        status: { [Op.in]: ['scheduled', 'delayed'] },
+        ...(includeDisruptions ? { [Op.or]: [
+          { routeId: { [Op.in]: routeIds }, status: { [Op.in]: ['scheduled', 'delayed'] } },
+          { status: { [Op.in]: ['missed', 'cancelled'] }, [Op.or]: children.map(child => ({
+            plan: { [Op.contains]: { stops: [{ studentId: child.id, parentId: req.user.id }] } },
+          })) },
+        ] } : { routeId: { [Op.in]: routeIds }, status: { [Op.in]: ['scheduled', 'delayed'] } }),
         scheduledDate: { [Op.between]: [fromStr, toStr] },
       },
       include: [
@@ -426,6 +451,7 @@ exports.getUpcomingTrips = async (req, res) => {
           model: Route,
           as: 'route',
           attributes: ['id', 'name', 'schoolId'],
+          where: { schoolId: { [Op.in]: [...new Set(children.map(child => child.schoolId))] } }, required: true,
           include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
         },
         { model: Vehicle, as: 'vehicle', attributes: ['id', 'plateNumber', 'make', 'model'] },
@@ -436,20 +462,26 @@ exports.getUpcomingTrips = async (req, res) => {
 
     const result = trips.map(trip => {
       const t = trip.toJSON();
+      if (t.plan?.schoolId != null && t.plan.schoolId !== t.route.schoolId) return null;
+      const historical = ['missed', 'cancelled'].includes(t.status);
       const myChildren = children
-        .filter(c => (c.routes || []).some(r => r.id === t.routeId))
+        .filter(c => c.schoolId === t.route.schoolId && (historical
+          ? t.plan?.stops?.some(stop => stop.studentId === c.id && stop.parentId === req.user.id)
+          : (c.routes || []).some(r => r.id === t.routeId)))
         .map(c => ({ studentId: c.id, studentName: `${c.firstName} ${c.lastName}`, grade: c.grade }));
+      if (!myChildren.length) return null;
       return {
         id: t.id, scheduledDate: t.scheduledDate, scheduledTime: t.scheduledTime,
         type: t.type, status: t.status,
-        route: { id: t.route?.id, name: t.route?.name },
+        lateMinutes: t.status === 'delayed' && tripStartMs(t) != null ? Math.max(0, Math.round((now - tripStartMs(t)) / 60000)) : null,
+        route: { id: t.route?.id, name: historical ? t.plan?.routeName || t.route?.name : t.route?.name },
         school: t.route?.school || null,
         vehicle: t.vehicle,
         driver: t.driver ? { id: t.driver.id, name: `${t.driver.firstName} ${t.driver.lastName}`, phone: t.driver.phone } : null,
         children: myChildren,
       };
-    });
+    }).filter(Boolean);
 
-    res.json({ trips: result, total: result.length, filters });
+    res.json({ trips: result, total: result.length, filters, schoolDate: fromStr });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

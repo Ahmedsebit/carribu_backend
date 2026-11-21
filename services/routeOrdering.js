@@ -24,7 +24,7 @@ async function getRouteStart(routeId, transaction) {
 }
 
 async function orderStudentIdsByPickupDistance(studentIds, startPoint, schoolId, transaction) {
-  const uniqueIds = [...new Set((studentIds || []).map(Number).filter(Number.isInteger))];
+  const uniqueIds = await validateRouteStudentIds(studentIds, schoolId, transaction);
   if (!startPoint || uniqueIds.length < 2) return uniqueIds;
 
   const students = await Student.findAll({
@@ -68,6 +68,19 @@ async function orderStudentIdsByPickupDistance(studentIds, startPoint, schoolId,
   });
 }
 
+async function validateRouteStudentIds(studentIds, schoolId, transaction) {
+  if (!Array.isArray(studentIds) || studentIds.some(id => !Number.isSafeInteger(Number(id)) || Number(id) < 1)) {
+    throw Object.assign(new Error('Valid student IDs are required.'), { status: 400 });
+  }
+  const ids = [...new Set(studentIds.map(Number))];
+  if (!ids.length) return ids;
+  const students = await Student.findAll({ where: { id: ids, schoolId }, attributes: ['id'], transaction });
+  if (students.length !== ids.length) {
+    throw Object.assign(new Error('Every assigned student must belong to this school.'), { status: 400 });
+  }
+  return ids;
+}
+
 async function replaceRouteStudentOrder(routeId, studentIds, startPoint, schoolId, transaction) {
   const orderedIds = await orderStudentIdsByPickupDistance(
     studentIds,
@@ -102,5 +115,6 @@ module.exports = {
   getRouteStart,
   orderStudentIdsByPickupDistance,
   replaceRouteStudentOrder,
+  validateRouteStudentIds,
   sortStudentsForTrip,
 };

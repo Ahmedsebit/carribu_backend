@@ -7,16 +7,12 @@ const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
 const { Trip } = require('../models');
+const { schoolDate } = require('../services/tripReminders');
 
 let adminToken, parentToken, parent2Token;
 
 const dateOffset = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return schoolDate(Date.now() + days * 86400000);
 };
 
 beforeAll(async () => {
@@ -70,7 +66,9 @@ beforeAll(async () => {
       vehicleId: vehicle.id,
       type: 'morning_pickup',
       scheduledDate: dateOffset(0),
+      scheduledTime: '07:30',
     });
+  expect(todayTrip.status).toBe(201);
   await Trip.update({ status: 'completed' }, { where: { id: todayTrip.body.trip.id } });
 });
 
@@ -79,9 +77,17 @@ afterAll(async () => {
 });
 
 describe('GET /api/parent/upcoming-trips', () => {
-  test('parent sees only scheduled trips within the default (tomorrow) window', async () => {
+  test('the default window starts and ends on today in the school calendar', async () => {
     const res = await request(app)
       .get('/api/parent/upcoming-trips')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.trips).toHaveLength(0);
+  });
+
+  test('a two-day window includes tomorrow in the school calendar', async () => {
+    const res = await request(app)
+      .get('/api/parent/upcoming-trips?days=2')
       .set('Authorization', `Bearer ${parentToken}`);
 
     expect(res.status).toBe(200);
@@ -105,7 +111,7 @@ describe('GET /api/parent/upcoming-trips', () => {
 
   test('each trip only exposes the requesting parent\'s own children', async () => {
     const res = await request(app)
-      .get('/api/parent/upcoming-trips')
+      .get('/api/parent/upcoming-trips?days=2')
       .set('Authorization', `Bearer ${parentToken}`);
 
     const trip = res.body.trips[0];
@@ -115,7 +121,7 @@ describe('GET /api/parent/upcoming-trips', () => {
 
   test('the other parent on the same route sees their own child only', async () => {
     const res = await request(app)
-      .get('/api/parent/upcoming-trips')
+      .get('/api/parent/upcoming-trips?days=2')
       .set('Authorization', `Bearer ${parent2Token}`);
 
     expect(res.status).toBe(200);

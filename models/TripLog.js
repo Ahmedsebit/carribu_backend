@@ -9,6 +9,7 @@ const TripLog = sequelize.define('TripLog', {
   lat: { type: DataTypes.DECIMAL(10,7) },
   lng: { type: DataTypes.DECIMAL(10,7) },
   notes: { type: DataTypes.TEXT },
+  recordedById: { type: DataTypes.INTEGER, field: 'recorded_by_id', allowNull: true },
   phase: { type: DataTypes.STRING(16), allowNull: true },
   idempotencyKey: { type: DataTypes.STRING(100), field: 'idempotency_key', allowNull: true },
 }, {

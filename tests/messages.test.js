@@ -6,6 +6,8 @@ const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, teardownTestDB, getTestData } = require('./setup');
 const { Message, Trip } = require('../models');
+const { schoolDate } = require('../services/tripReminders');
+const currentTime = () => new Date(Date.now() + 3 * 3600000).toISOString().slice(11, 16);
 
 let adminToken, driverToken, parentToken;
 
@@ -59,19 +61,18 @@ describe('Messaging API', () => {
     expect(res.body.message.content).toContain('10 minutes');
   });
 
-  test('POST /api/messages - parent can report absence', async () => {
-    const { driver } = getTestData();
+  test('POST /api/messages/absence - parent can request absence review', async () => {
+    const { student1 } = getTestData();
     const res = await request(app)
-      .post('/api/messages')
+      .post('/api/messages/absence')
       .set('Authorization', `Bearer ${parentToken}`)
       .send({
-        receiverId: driver.id,
-        content: 'My child will not be coming today - feeling unwell.',
-        messageType: 'absence',
+        studentId: student1.id,
+        reason: 'My child will not be coming today - feeling unwell.',
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.message.messageType).toBe('absence');
+    expect(res.body.requests[0]).toMatchObject({ studentId: student1.id, status: 'pending', date: schoolDate() });
   });
 
   test('GET /api/messages/conversations - lists conversations', async () => {
@@ -116,7 +117,7 @@ describe('Notifications API', () => {
       vehicleId: vehicle.id,
       type: 'morning_pickup',
       status: 'scheduled',
-      scheduledDate: new Date().toISOString().split('T')[0],
+      scheduledDate: schoolDate(Date.now() + 86400000),
     });
 
     const res = await request(app)
@@ -187,8 +188,9 @@ describe('Location API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         routeId: route.id, driverId: driver.id, vehicleId: vehicle.id,
-        type: 'morning_pickup', scheduledDate: new Date().toISOString().split('T')[0],
+        type: 'morning_pickup', scheduledDate: schoolDate(), scheduledTime: currentTime(),
       });
+    expect(tripRes.status).toBe(201);
     tripId = tripRes.body.trip.id;
     // Start the trip
     await request(app)

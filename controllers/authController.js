@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
-const { User, School } = require('../models');
+const { User, School, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const parentSchoolsInclude = {
   model: School,
   as: 'parentSchools',
@@ -8,8 +9,9 @@ const parentSchoolsInclude = {
 };
 const { logLogin } = require('../middleware/auditLog');
 const { normalizePhoneE164 } = require('../utils/phone');
+const { verifyInvitation, activateParent } = require('../services/parentActivation');
 const generateToken = (user) => jwt.sign(
-  { id: user.id, email: user.email, role: user.role, schoolId: user.schoolId },
+  { id: user.id, email: user.email, role: user.role, schoolId: user.schoolId, authVersion: user.authVersion || 0 },
   process.env.JWT_SECRET || 'default-secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
 );
 const hideInactivePrimarySchool = user => {
@@ -21,17 +23,25 @@ const hideInactivePrimarySchool = user => {
 exports.register = async (req, res) => {
   try {
     const { email, password, firstName, lastName, role, phone, schoolId } = req.body;
+    if (role !== undefined && role !== 'parent') {
+      return res.status(403).json({ error: 'Privileged accounts must be created by an authorised administrator.' });
+    }
+    if (schoolId != null) {
+      return res.status(403).json({ error: 'School enrollment must be arranged by an authorised administrator.' });
+    }
     const normalizedEmail = email?.trim().toLowerCase();
     if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
-    if (await User.findOne({ where: { schoolId: schoolId || null, email: normalizedEmail } })) {
+    const normalizedPhone = phone == null ? null : normalizePhoneE164(phone);
+    if (phone != null && !normalizedPhone) return res.status(400).json({ error: 'A valid phone number is required.' });
+    if (await User.findOne({ where: { schoolId: null, email: normalizedEmail } })) {
       return res.status(400).json({ error: 'Email already registered for this school.' });
     }
-    if (schoolId) {
-      const school = await School.findByPk(schoolId);
-      if (!school) return res.status(400).json({ error: 'Invalid school ID.' });
-    }
-    const user = await User.create({ email: normalizedEmail, passwordHash: password, firstName, lastName, role: role || 'parent', phone, schoolId: schoolId || null });
-    res.status(201).json({ message: 'User registered.', token: generateToken(user), user });
+    const user = await User.create({ email: normalizedEmail, passwordHash: password, firstName, lastName,
+      role: 'parent', phone: normalizedPhone, schoolId: null, mustSetPassword: true });
+    res.status(201).json({
+      message: 'Account created. Your school must arrange enrollment and provide an activation code before you can sign in.',
+      user,
+    });
   } catch (err) { res.status(500).json({ error: 'Registration failed.', details: err.message }); }
 };
 exports.login = async (req, res) => {
@@ -70,6 +80,9 @@ exports.login = async (req, res) => {
     }
     const user = matchingUsers[0];
     if (!user.isActive) return res.status(403).json({ error: 'Account deactivated.' });
+    if (user.role === 'parent' && user.mustSetPassword) {
+      return res.status(403).json({ error: 'Activate your account using the invitation code provided by your school.' });
+    }
     hideInactivePrimarySchool(user);
     await logLogin(user.id, loginIdentifier, req.ip, true);
     res.json({ message: 'Login successful.', token: generateToken(user), user });
@@ -89,44 +102,22 @@ exports.getMe = async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// Public: check whether a phone number has a pending parent registration to complete
+// Reveal pending account details only after validating the school's invitation.
 exports.registrationStatus = async (req, res) => {
   try {
-    const phone = normalizePhoneE164(req.body.phone);
-    if (!phone) return res.status(400).json({ error: 'phone is required.' });
-    const parents = await User.findAll({
-      where: { phone, role: 'parent', mustSetPassword: true, isActive: true },
-      include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
-    });
-    if (parents.length !== 1) return res.json({ found: false });
-    const p = parents[0];
-    res.json({ found: true, firstName: p.firstName, schoolName: p.school?.name || null });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    const { user } = await verifyInvitation(req.body.phone, req.body.invitationCode);
+    res.json({ found: true, firstName: user.firstName });
+  } catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not verify invitation.' }); }
 };
 
 // Public: a parent completes their registration by setting their own password
 exports.completeRegistration = async (req, res) => {
   try {
-    const { newPassword } = req.body;
-    const phone = normalizePhoneE164(req.body.phone);
-    if (!phone || !newPassword) return res.status(400).json({ error: 'phone and newPassword are required.' });
-    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-
-    const parents = await User.findAll({
-      where: { phone, role: 'parent', mustSetPassword: true, isActive: true },
-      include: [{ model: School, as: 'school', attributes: ['id', 'name'] }],
-    });
-    if (parents.length === 0) {
-      return res.status(404).json({ error: 'No pending account found for this phone number. Please contact your school.' });
+    const { newPassword, phone, invitationCode } = req.body;
+    if (typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'Password must be between 6 and 128 characters.' });
     }
-    if (parents.length > 1) {
-      return res.status(409).json({ error: 'Multiple accounts found for this phone number. Please contact your school.' });
-    }
-
-    const user = parents[0];
-    user.passwordHash = newPassword;
-    user.mustSetPassword = false;
-    await user.save();
+    const user = await activateParent(phone, invitationCode, newPassword);
 
     const registeredUser = await User.findByPk(user.id, {
       include: [
@@ -136,7 +127,7 @@ exports.completeRegistration = async (req, res) => {
     });
     hideInactivePrimarySchool(registeredUser);
     res.json({ message: 'Registration complete.', token: generateToken(user), user: registeredUser });
-  } catch (err) { res.status(500).json({ error: 'Could not complete registration.', details: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not complete registration.' }); }
 };
 exports.changePassword = async (req, res) => {
   try {
@@ -208,11 +199,25 @@ exports.savePushToken = async (req, res) => {
     if (pushToken !== null && pushToken !== undefined && typeof pushToken !== 'string') {
       return res.status(400).json({ error: 'pushToken must be a string or null.' });
     }
-    const user = await User.findByPk(req.user.id);
-    if (!user) return res.status(404).json({ error: 'User not found.' });
     const field = provider === 'fcm' ? 'fcmPushToken' : 'expoPushToken';
-    user[field] = pushToken?.trim() || null;
-    await user.save();
+    const token = pushToken?.trim() || null;
+    await sequelize.transaction(async transaction => {
+      if (token) {
+        await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:key))', {
+          replacements: { key: `push:${provider}:${token}` }, transaction,
+        });
+        await User.update({ [field]: null }, {
+          where: { [field]: token, id: { [Op.ne]: req.user.id } }, transaction,
+        });
+      }
+      const user = await User.findByPk(req.user.id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!user?.isActive) throw Object.assign(new Error('User not found.'), { status: 404 });
+      if ((user.authVersion || 0) !== req.user.authVersion || user.role === 'parent' && user.mustSetPassword) {
+        throw Object.assign(new Error('This session is no longer valid.'), { status: 401 });
+      }
+      user[field] = token;
+      await user.save({ transaction });
+    });
     res.json({ message: `${provider.toUpperCase()} push token saved.` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };

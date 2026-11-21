@@ -1,6 +1,22 @@
-const { Vehicle, School, Route, User, Trip, TripLog, Student } = require('../models');
+const { sequelize, Vehicle, School, Route, User, Trip, TripLog, Student } = require('../models');
 const { Op } = require('sequelize');
 const { getLocationSource, getAdminTripLocation } = require('../services/locationTracking');
+const { editableFields } = require('../utils/editableFields');
+const { historicalAttendance } = require('../services/tripPlan');
+const { lockSchool } = require('../services/tripWorkflow');
+const VEHICLE_FIELDS = ['plateNumber', 'make', 'model', 'year', 'capacity', 'color', 'status', 'insuranceExpiry', 'lastServiceDate'];
+function validateVehicleFields(data) {
+  if ('capacity' in data) {
+    if (!['number', 'string'].includes(typeof data.capacity)
+      || !Number.isSafeInteger(Number(data.capacity)) || Number(data.capacity) < 1) {
+      throw Object.assign(new Error('Capacity must be a positive whole number.'), { status: 400 });
+    }
+    data.capacity = Number(data.capacity);
+  }
+  if ('status' in data && !['active', 'maintenance', 'retired'].includes(data.status)) {
+    throw Object.assign(new Error('Invalid vehicle status.'), { status: 400 });
+  }
+}
 exports.getAll = async (req, res) => {
   try {
     const where = { schoolId: req.user.schoolId };
@@ -84,7 +100,7 @@ exports.getTripHistory = async (req, res) => {
           include: [{
             model: Student,
             as: 'students',
-            attributes: ['id'],
+            attributes: ['id', 'isActive'],
             through: { attributes: [] },
           }],
         },
@@ -96,10 +112,7 @@ exports.getTripHistory = async (req, res) => {
 
     const trips = tripRows.map(row => {
       const trip = row.toJSON();
-      const expectedStudents = trip.route?.students?.length || 0;
-      const boardedStudentIds = new Set(trip.logs.filter(log => log.action === 'check_in').map(log => log.studentId));
-      const droppedStudentIds = new Set(trip.logs.filter(log => log.action === 'check_out').map(log => log.studentId));
-      const absentStudentIds = new Set(trip.logs.filter(log => log.action === 'absent').map(log => log.studentId));
+      const attendance = historicalAttendance(trip, trip.route?.students);
       const durationMinutes = trip.startedAt && trip.endedAt
         ? Math.max(0, Math.round((new Date(trip.endedAt) - new Date(trip.startedAt)) / 60000))
         : null;
@@ -114,13 +127,7 @@ exports.getTripHistory = async (req, res) => {
         durationMinutes,
         route: trip.route ? { id: trip.route.id, name: trip.route.name } : null,
         driver: trip.driver,
-        attendance: {
-          expected: expectedStudents,
-          boarded: boardedStudentIds.size,
-          droppedOff: droppedStudentIds.size,
-          absent: absentStudentIds.size,
-          notBoarded: Math.max(0, expectedStudents - boardedStudentIds.size - absentStudentIds.size),
-        },
+        attendance,
       };
     });
 
@@ -182,15 +189,17 @@ exports.create = async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'trackerUniqueId')) {
       return res.status(403).json({ error: 'Only a super admin can manage tracker assignments.' });
     }
-    const plateNumber = String(req.body.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const data = editableFields(req.body, VEHICLE_FIELDS);
+    validateVehicleFields(data);
+    const plateNumber = String(data.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
     if (!plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
     const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: plateNumber } } });
     if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
-    const vehicle = await Vehicle.create({ ...req.body, plateNumber, schoolId: req.user.schoolId });
+    const vehicle = await Vehicle.create({ ...data, plateNumber, schoolId: req.user.schoolId });
     res.status(201).json({ message: 'Vehicle created.', vehicle });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'The plate number or tracker IMEI is already assigned.' });
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 exports.update = async (req, res) => {
@@ -198,28 +207,48 @@ exports.update = async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'trackerUniqueId')) {
       return res.status(403).json({ error: 'Only a super admin can manage tracker assignments.' });
     }
-    const vehicle = await Vehicle.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
-    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
-    const updates = { ...req.body };
-    if (Object.prototype.hasOwnProperty.call(updates, 'plateNumber')) {
-      updates.plateNumber = String(updates.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
-      if (!updates.plateNumber) return res.status(400).json({ error: 'Plate number is required.' });
-      const existing = await Vehicle.findOne({ where: { plateNumber: { [Op.iLike]: updates.plateNumber }, id: { [Op.ne]: vehicle.id } } });
-      if (existing) return res.status(409).json({ error: 'A vehicle with this plate number already exists.' });
-    }
-    await vehicle.update(updates); res.json({ message: 'Vehicle updated.', vehicle });
+    const updates = editableFields(req.body, VEHICLE_FIELDS);
+    const vehicle = await updateVehicle(req, updates);
+    res.json({ message: 'Vehicle updated.', vehicle });
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError') return res.status(409).json({ error: 'The plate number or tracker IMEI is already assigned.' });
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 };
 exports.delete = async (req, res) => {
   try {
-    const vehicle = await Vehicle.findOne({ where: { id: req.params.id, schoolId: req.user.schoolId } });
-    if (!vehicle) return res.status(404).json({ error: 'Vehicle not found.' });
-    await vehicle.update({ status: 'retired' }); res.json({ message: 'Vehicle retired.' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    await updateVehicle(req, { status: 'retired' });
+    res.json({ message: 'Vehicle retired.' });
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
+
+async function updateVehicle(req, updates) {
+  validateVehicleFields(updates);
+  return sequelize.transaction(async transaction => {
+    await lockSchool(req.user.schoolId, transaction);
+    const vehicle = await Vehicle.findOne({
+      where: { id: req.params.id, schoolId: req.user.schoolId },
+      transaction, lock: transaction.LOCK.UPDATE,
+    });
+    if (!vehicle) throw Object.assign(new Error('Vehicle not found.'), { status: 404 });
+    if (('capacity' in updates && updates.capacity !== vehicle.capacity)
+      || ('status' in updates && updates.status !== vehicle.status)) {
+      if (await Trip.count({ where: { vehicleId: vehicle.id, status: 'in_progress' }, transaction })) {
+        throw Object.assign(new Error('Capacity and status cannot change while this vehicle has an active trip.'), { status: 409 });
+      }
+    }
+    if ('plateNumber' in updates) {
+      updates.plateNumber = String(updates.plateNumber || '').trim().toUpperCase().replace(/\s+/g, ' ');
+      if (!updates.plateNumber) throw Object.assign(new Error('Plate number is required.'), { status: 400 });
+      const existing = await Vehicle.findOne({
+        where: { plateNumber: { [Op.iLike]: updates.plateNumber }, id: { [Op.ne]: vehicle.id } }, transaction,
+      });
+      if (existing) throw Object.assign(new Error('A vehicle with this plate number already exists.'), { status: 409 });
+    }
+    await vehicle.update(updates, { transaction });
+    return vehicle;
+  });
+}
 exports.getStats = async (req, res) => {
   try {
     const schoolId = req.user.schoolId;

@@ -110,9 +110,9 @@ async function sendFcmPush(user, title, body, data) {
 async function sendPushToUser(userId, title, body, data = {}) {
   try {
     const user = await User.findByPk(userId, {
-      attributes: ['id', 'expoPushToken', 'fcmPushToken'],
+      attributes: ['id', 'role', 'mustSetPassword', 'isActive', 'expoPushToken', 'fcmPushToken'],
     });
-    if (!user) return;
+    if (!user?.isActive || user.role === 'parent' && user.mustSetPassword) return;
     await Promise.all([
       sendExpoPush(user, title, body, data),
       sendFcmPush(user, title, body, data),
@@ -141,8 +141,9 @@ async function expoRequest(path, body) {
 }
 
 async function deliverOutboxPush(userId, title, body, data, previous = {}) {
-  const user = await User.findByPk(userId, { attributes: ['id', 'expoPushToken', 'fcmPushToken'] });
-  if (!user) return { account: { status: 'failed', error: 'USER_NOT_FOUND' } };
+  const user = await User.findByPk(userId, { attributes: ['id', 'role', 'mustSetPassword', 'isActive', 'expoPushToken', 'fcmPushToken'] });
+  if (!user?.isActive) return { account: { status: 'failed', error: 'USER_NOT_FOUND_OR_INACTIVE' } };
+  if (user.role === 'parent' && user.mustSetPassword) return { account: { status: 'failed', error: 'ACCOUNT_NOT_ACTIVATED' } };
   const results = { ...previous };
   if (results.expo?.status === 'pending_receipt') {
     try {

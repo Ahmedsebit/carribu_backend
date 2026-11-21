@@ -18,9 +18,11 @@ const app = express();
 app.use('/api/vehicles', require('../routes/vehicles'));
 const secret = 'vehicle-location-test-secret';
 let originalSecret, vehicle, trip, locations;
-const getLocation = (role = 'school_admin', schoolId = 1, id = '12') =>
-  request(app).get(`/api/vehicles/${id}/location`)
+const getLocation = (role = 'school_admin', schoolId = 1, id = '12') => {
+  User.findByPk.mockResolvedValue({ id: 8, role, schoolId, isActive: true });
+  return request(app).get(`/api/vehicles/${id}/location`)
     .set('Authorization', `Bearer ${jwt.sign({ id: 8, role, schoolId }, secret)}`);
+};
 
 beforeAll(() => {
   originalSecret = process.env.JWT_SECRET;
@@ -41,7 +43,7 @@ beforeEach(() => {
     route: { id: 3, name: 'Test route', schoolId: 1 },
   };
   locations = [];
-  User.findByPk.mockResolvedValue({ id: 8, isActive: true });
+  User.findByPk.mockResolvedValue({ id: 8, role: 'school_admin', schoolId: 1, isActive: true });
   VehicleTrackerPosition.findOne.mockResolvedValue(null);
   Vehicle.findOne.mockImplementation(async ({ where }) =>
     where.id === vehicle.id && where.schoolId === vehicle.schoolId ? vehicle : null);

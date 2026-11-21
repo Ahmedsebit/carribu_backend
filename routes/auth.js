@@ -13,7 +13,8 @@ const { authenticate } = require('../middleware/auth');
  * @swagger
  * /api/auth/register:
  *   post:
- *     summary: Register a new user
+ *     summary: Create an unlinked parent account awaiting school activation
+ *     description: No session token is issued. School staff must arrange enrollment and provide an activation invitation. Privileged accounts require authorised provisioning.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -22,7 +23,7 @@ const { authenticate } = require('../middleware/auth');
  *         application/json:
  *           schema:
  *             type: object
- *             required: [email, password, firstName, lastName, schoolId]
+ *             required: [email, password, firstName, lastName]
  *             properties:
  *               email:
  *                 type: string
@@ -40,17 +41,14 @@ const { authenticate } = require('../middleware/auth');
  *                 example: Doe
  *               role:
  *                 type: string
- *                 enum: [admin, coordinator, driver, parent]
+ *                 enum: [parent]
  *                 default: parent
  *               phone:
  *                 type: string
  *                 example: "+254700000000"
- *               schoolId:
- *                 type: integer
- *                 example: 1
  *     responses:
  *       201:
- *         description: User registered successfully
+ *         description: Account created pending school enrollment and invitation activation
  *         content:
  *           application/json:
  *             schema:
@@ -58,12 +56,12 @@ const { authenticate } = require('../middleware/auth');
  *               properties:
  *                 message:
  *                   type: string
- *                 token:
- *                   type: string
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       400:
- *         description: Email already registered or invalid school ID
+ *         description: Email is missing or already registered, or phone is invalid
+ *       403:
+ *         description: Privileged role or public school enrollment is not permitted
  */
 router.post('/register', authController.register);
 
@@ -114,7 +112,7 @@ router.post('/login', authController.login);
  * @swagger
  * /api/auth/registration-status:
  *   post:
- *     summary: Check if a phone number has a pending parent registration to complete
+ *     summary: Verify a school-issued parent activation invitation
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -123,9 +121,10 @@ router.post('/login', authController.login);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [phone]
+ *             required: [phone, invitationCode]
  *             properties:
  *               phone: { type: string, example: '+254712345678' }
+ *               invitationCode: { type: string }
  *     responses:
  *       200:
  *         description: Whether a pending registration exists
@@ -145,10 +144,11 @@ router.post('/registration-status', authController.registrationStatus);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [phone, newPassword]
+ *             required: [phone, invitationCode, newPassword]
  *             properties:
  *               phone: { type: string, example: '+254712345678' }
  *               newPassword: { type: string, minLength: 6, example: secret123 }
+ *               invitationCode: { type: string }
  *     responses:
  *       200:
  *         description: Registration complete; returns auth token

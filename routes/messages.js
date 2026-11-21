@@ -66,7 +66,7 @@ router.delete('/notifications/:id', c.deleteNotification);
  *       200:
  *         description: List of drivers
  */
-router.get('/my-drivers', c.getMyDrivers);
+router.get('/my-drivers', authorize('parent'), c.getMyDrivers);
 
 /**
  * @swagger
@@ -103,7 +103,7 @@ router.delete('/thread/:partnerId', c.clearThread);
  *       200:
  *         description: List of parents on the route
  */
-router.get('/route-parents/:routeId', c.getRouteParents);
+router.get('/route-parents/:routeId', authorize('school_admin', 'coordinator', 'driver'), c.getRouteParents);
 
 /**
  * @swagger
@@ -137,9 +137,12 @@ router.post('/trip-notification', authorize('school_admin', 'coordinator'), c.se
  *                 type: string
  *               tripId:
  *                 type: integer
- *               type:
+ *               messageType:
  *                 type: string
- *                 enum: [text, alert, absence]
+ *                 enum: [text]
+ *               clientMessageId:
+ *                 type: string
+ *                 description: Reuse the same identifier when retrying a message after a timeout.
  *     responses:
  *       201:
  *         description: Message sent
@@ -150,7 +153,7 @@ router.post('/', c.send);
  * @swagger
  * /api/messages/absence:
  *   post:
- *     summary: Report student absence (parent notifies driver)
+ *     summary: Submit an absence for staff review and notify the driver
  *     tags: [Messages]
  *     requestBody:
  *       required: true
@@ -171,7 +174,7 @@ router.post('/', c.send);
  *       201:
  *         description: Absence reported
  */
-router.post('/absence', c.reportAbsence);
+router.post('/absence', authorize('parent'), c.reportAbsence);
 router.delete('/:id', c.deleteMessage);
 
 module.exports = router;

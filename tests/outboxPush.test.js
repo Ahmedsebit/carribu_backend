@@ -12,7 +12,8 @@ const reply = data => ({ ok: true, json: async () => ({ data }) });
 beforeEach(() => {
   jest.clearAllMocks();
   global.fetch = jest.fn();
-  User.findByPk.mockResolvedValue({ id: 1, expoPushToken: 'ExpoPushToken[test]', fcmPushToken: null });
+  User.findByPk.mockResolvedValue({ id: 1, isActive: true, role: 'parent', mustSetPassword: false,
+    expoPushToken: 'ExpoPushToken[test]', fcmPushToken: null });
   User.update.mockResolvedValue([1]);
   mockSend.mockResolvedValue('fcm-message');
 });
@@ -45,7 +46,8 @@ test('invalid registration clears only the token that failed', async () => {
 });
 
 test('FCM acceptance is retained while an Expo submission is retried', async () => {
-  User.findByPk.mockResolvedValue({ id: 1, expoPushToken: 'ExpoPushToken[test]', fcmPushToken: 'fcm-test' });
+  User.findByPk.mockResolvedValue({ id: 1, isActive: true, role: 'parent', mustSetPassword: false,
+    expoPushToken: 'ExpoPushToken[test]', fcmPushToken: 'fcm-test' });
   fetch.mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValueOnce(reply({ status: 'ok', id: 'ticket' }));
   const first = await deliverOutboxPush(1, 'Title', 'Body', { tripId: 1 });
   const second = await deliverOutboxPush(1, 'Title', 'Body', { tripId: 1 }, first);
@@ -54,7 +56,7 @@ test('FCM acceptance is retained while an Expo submission is retried', async () 
 });
 
 test('missing devices remain unregistered over repeated attempts', async () => {
-  User.findByPk.mockResolvedValue({ id: 1 });
+  User.findByPk.mockResolvedValue({ id: 1, isActive: true, role: 'parent', mustSetPassword: false });
   const first = await deliverOutboxPush(1, 'Title', 'Body', {});
   expect((await deliverOutboxPush(1, 'Title', 'Body', {}, first)).device.status).toBe('unregistered');
 });

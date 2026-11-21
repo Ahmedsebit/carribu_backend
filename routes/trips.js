@@ -47,7 +47,7 @@ router.get('/:id/notifications', authorize('school_admin', 'coordinator'), c.get
  *         application/json:
  *           schema:
  *             type: object
- *             required: [routeId, type, scheduledDate]
+ *             required: [routeId, type, scheduledDate, scheduledTime]
  *             properties:
  *               routeId:
  *                 type: integer

@@ -29,7 +29,7 @@ jest.mock('../utils/parentSchoolAccess', () => ({
 
 const { sequelize, VehicleTrackerPosition, BusLocation, Trip, Vehicle, Route, User, Student, TripLog } = require('../models');
 const { hasActiveParentSchool, getActiveParentSchoolIds } = require('../utils/parentSchoolAccess');
-const { initSocket } = require('../socket');
+const { initSocket, notifyTrip } = require('../socket');
 const { ingestPosition } = require('../services/trackerIngestion');
 const { getTripLocationWhere } = require('../services/locationTracking');
 const tripController = require('../controllers/tripController');
@@ -43,7 +43,10 @@ app.use('/trips', require('../routes/trips'));
 const server = http.createServer(app);
 const io = initSocket(server);
 const secret = 'location-source-tests-only';
-const token = (role = 'driver', id = 3, schoolId = 4) => jwt.sign({ id, role, schoolId }, secret);
+const token = (role = 'driver', id = 3, schoolId = 4) => {
+  User.findByPk.mockResolvedValue({ id, role, schoolId, isActive: true, pickupLat: null, pickupLng: null });
+  return jwt.sign({ id, role, schoolId }, secret);
+};
 const payload = { tripId: 2, lat: -1.2, lng: 36.8, speed: 20, heading: 90 };
 let originalSecret, vehicle, trip, locations, clients, snapshot;
 
@@ -104,7 +107,7 @@ beforeEach(() => {
     plan: { version: 1, schoolId: 4, routeName: 'Test route', stops: [] },
     toJSON() { return { ...this }; },
   };
-  User.findByPk.mockResolvedValue({ id: 3, isActive: true, pickupLat: null, pickupLng: null });
+  User.findByPk.mockResolvedValue({ id: 3, role: 'driver', schoolId: 4, isActive: true, pickupLat: null, pickupLng: null });
   sequelize.transaction.mockImplementation(async callback => callback({
     LOCK: { UPDATE: 'UPDATE' }, afterCommit: callback => callback(),
   }));
@@ -240,6 +243,21 @@ describe('authoritative active-trip location source', () => {
     expect(result.status).toBe(201);
     expect(locations[0]).toMatchObject({ source: 'traccar', trackerPositionId: null });
     await until(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ source: 'traccar', lat: -1.3 })));
+  });
+
+  test('a parent subscription receives updates only while its active school membership remains valid', async () => {
+    trip.plan.stops = [{ studentId: 5, parentId: 3 }];
+    Student.findAll.mockResolvedValue([{ id: 5 }]);
+    const parent = await socketClient('parent');
+    const received = jest.fn();
+    parent.on('location-update', received);
+    expect(await parent.timeout(2000).emitWithAck('track-trip', 2)).toMatchObject({ accepted: true });
+    await notifyTrip(2, 'location-update', { lat: -1.3, lng: 36.9 });
+    await until(() => expect(received).toHaveBeenCalledTimes(1));
+    hasActiveParentSchool.mockResolvedValue(false);
+    await notifyTrip(2, 'location-update', { lat: -1.4, lng: 37 });
+    expect(io.sockets.adapter.rooms.has('trip:2')).toBe(false);
+    expect(received).toHaveBeenCalledTimes(1);
   });
 
   test('live map and history use device fixes, not a newer cached phone position', async () => {

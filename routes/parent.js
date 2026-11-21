@@ -17,7 +17,7 @@ router.use(schoolTenancy);
  * @swagger
  * /api/parent/trip-history:
  *   get:
- *     summary: Completed trips that carried the parent's children (default last 30 days)
+ *     summary: Completed, cancelled and missed journeys for the parent's children (default last 30 days)
  *     tags: [Parent]
  *     parameters:
  *       - in: query
@@ -43,7 +43,7 @@ router.get('/trip-history', c.getTripHistory);
  * @swagger
  * /api/parent/upcoming-trips:
  *   get:
- *     summary: Scheduled trips that will carry the parent's children (default the next day)
+ *     summary: Scheduled journeys for the parent's children, starting on today's school-local date
  *     tags: [Parent]
  *     parameters:
  *       - in: query
@@ -51,6 +51,12 @@ router.get('/trip-history', c.getTripHistory);
  *         schema:
  *           type: integer
  *           default: 1
+ *       - in: query
+ *         name: includeDisruptions
+ *         description: Include missed/cancelled journeys with frozen participation, even after route reassignment
+ *         schema:
+ *           type: boolean
+ *           default: false
  *       - in: query
  *         name: schoolId
  *         schema:
@@ -61,7 +67,7 @@ router.get('/trip-history', c.getTripHistory);
  *           type: integer
  *     responses:
  *       200:
- *         description: List of upcoming scheduled/delayed trips
+ *         description: Today's and upcoming journeys, optionally including missed/cancelled snapshots
  */
 router.get('/upcoming-trips', c.getUpcomingTrips);
 

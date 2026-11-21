@@ -1,4 +1,4 @@
-jest.mock('../socket', () => ({ notifyTrip: jest.fn(), emitUser: jest.fn(), PUSH_TITLES: {} }));
+jest.mock('../socket', () => ({ notifyTrip: jest.fn(), notifyUser: jest.fn(), emitUser: jest.fn(), PUSH_TITLES: {} }));
 const request = require('supertest');
 const app = require('./testApp');
 const { setupTestDB, getTestData } = require('./setup');
@@ -6,6 +6,7 @@ const { sequelize, Trip, TripLog, Route, RouteStudent, RouteWaypoint, User, Vehi
 const { startTrip, logStudentAction, completeTrip } = require('../services/tripWorkflow');
 const { recordLocation } = require('../services/locationTracking');
 const { notifyTrip } = require('../socket');
+const { schoolDate } = require('../services/tripReminders');
 
 let data, actor, admin, driverToken, parentToken, otherDriver, otherVehicle;
 beforeAll(async () => {
@@ -40,7 +41,7 @@ beforeEach(async () => {
 });
 const create = (type = 'morning_pickup', extra = {}) => Trip.create({
   routeId: data.route.id, driverId: data.driver.id, vehicleId: data.vehicle.id,
-  type, scheduledDate: '2026-10-30', ...extra,
+  type, scheduledDate: schoolDate(), ...extra,
 });
 const act = (id, studentId, action, phase = action === 'check_out' ? 'dropoff' : 'pickup', extra = {}) =>
   logStudentAction(id, actor, { studentId, action, phase, ...extra });
@@ -207,7 +208,8 @@ test('active routes cannot be edited or deactivated and historical roster filter
   expect(response.status).not.toHaveBeenCalled();
   expect(response.json.mock.calls[0][0].trips[0].route.students[0].id).toBe(data.student2.id);
   const duplicate = await request(app).post('/api/trips').set('Authorization', `Bearer ${admin}`)
-    .send({ routeId: data.route.id, type: 'morning_pickup', scheduledDate: '2026-10-30' });
+    .send({ routeId: data.route.id, type: 'morning_pickup', scheduledDate: schoolDate(),
+      scheduledTime: new Date(Date.now() + 3 * 3600000).toISOString().slice(11, 16) });
   expect(duplicate.status).toBe(409);
 });
 

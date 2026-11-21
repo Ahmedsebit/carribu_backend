@@ -5,7 +5,7 @@ module.exports = sequelize.define('NotificationOutbox', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   eventKey: { type: DataTypes.STRING(200), allowNull: false, unique: true, field: 'event_key' },
   schoolId: { type: DataTypes.INTEGER, allowNull: false, field: 'school_id' },
-  tripId: { type: DataTypes.INTEGER, allowNull: false, field: 'trip_id' },
+  tripId: { type: DataTypes.INTEGER, allowNull: true, field: 'trip_id' },
   receiverId: { type: DataTypes.INTEGER, allowNull: false, field: 'receiver_id' },
   messageId: { type: DataTypes.INTEGER, field: 'message_id' },
   event: { type: DataTypes.STRING(80), allowNull: false },

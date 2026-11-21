@@ -4,10 +4,13 @@ const { Op } = require('sequelize');
 const {
   checkDelayedTrips,
   checkMissedTrips,
+  schoolDate,
 } = require('../services/tripReminders');
 const { getAdminTripLocation, getLocationSource } = require('../services/locationTracking');
 const workflow = require('../services/tripWorkflow');
 const { getTripState } = require('../services/tripPlan');
+const { getAccessibleTrip } = require('../services/tripAccess');
+const { getReadyRoute } = require('../services/tripReadiness');
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -59,7 +62,7 @@ async function findDailyStudentConflicts({
   const trips = await Trip.findAll({
     attributes: ['id', 'type', 'scheduledDate', 'status', 'plan'],
     where,
-    include: [{
+    include: [{ model: TripLog, as: 'logs', include: [{ model: Student, as: 'student', attributes: ['id', 'firstName', 'lastName'] }] }, {
       model: Route,
       as: 'route',
       attributes: ['id', 'name'],
@@ -78,9 +81,12 @@ async function findDailyStudentConflicts({
   });
 
   return trips.flatMap(conflictingTrip => {
-    const students = conflictingTrip.plan?.stops || conflictingTrip.route.students.map(student => ({
+    const frozen = conflictingTrip.plan && !['scheduled', 'delayed'].includes(conflictingTrip.status);
+    const students = (frozen ? conflictingTrip.plan.stops : null) || (conflictingTrip.status === 'completed'
+      ? getTripState(conflictingTrip, conflictingTrip.logs).pickupList
+      : conflictingTrip.route.students.map(student => ({
       studentId: student.id, admissionNumber: student.admissionNumber, studentName: `${student.firstName} ${student.lastName}`,
-    }));
+    })));
     return students.filter(student => studentIds.includes(student.studentId)).map(student => ({
       studentId: student.studentId,
       admissionNumber: student.admissionNumber,
@@ -94,6 +100,23 @@ async function findDailyStudentConflicts({
   });
 }
 
+async function findResourceConflicts(route, dates, scheduledTime, transaction) {
+  if (!dates.length) return [];
+  const trips = await Trip.findAll({
+    where: {
+      scheduledDate: { [Op.in]: dates }, scheduledTime,
+      status: { [Op.in]: ['scheduled', 'delayed', 'in_progress'] },
+      [Op.or]: [{ driverId: route.driverId }, { vehicleId: route.vehicleId }],
+    },
+    include: [{ model: Route, as: 'route', where: { schoolId: route.schoolId }, required: true }],
+    transaction,
+  });
+  return trips.map(trip => ({
+    tripId: trip.id, scheduledDate: trip.scheduledDate,
+    routeName: trip.route.name, resourceConflict: true,
+  }));
+}
+
 exports.getAll = async (req, res) => {
   try {
     // Refresh delayed/missed-trip state before listing so the admin dashboard
@@ -101,10 +124,13 @@ exports.getAll = async (req, res) => {
     // window without being started (missed / "not started").
     await checkDelayedTrips(Date.now());
     await checkMissedTrips(Date.now());
+    const today = schoolDate();
     const where = {};
     if (req.query.status) where.status = req.query.status;
     if (req.query.date) {
-      where.scheduledDate = req.query.date;
+      if (req.query.date === 'today' && req.query.includeActive === 'true') {
+        where[Op.and] = [{ [Op.or]: [{ scheduledDate: today }, { status: 'in_progress' }] }];
+      } else where.scheduledDate = req.query.date === 'today' ? today : req.query.date;
     } else if (req.query.startDate || req.query.endDate) {
       where.scheduledDate = {};
       if (req.query.startDate) where.scheduledDate[Op.gte] = req.query.startDate;
@@ -136,15 +162,17 @@ exports.getAll = async (req, res) => {
       { model: User, as: 'driver', attributes: ['id','firstName','lastName'] },
       { model: TripLog, as: 'logs' },
     ], order: [['scheduled_date','DESC'],['created_at','DESC']] });
-    const result = trips.map(trip => {
+    const result = trips.filter(trip => trip.plan?.schoolId == null || trip.plan.schoolId === req.user.schoolId).map(trip => {
       const t = trip.toJSON();
       const state = getTripState(t);
       t.studentStats = state.stats;
+      const upcoming = ['scheduled', 'delayed'].includes(t.status) && !t.startedAt;
+      t.rosterSource = t.plan && !upcoming ? 'trip_plan' : ['completed', 'cancelled', 'missed'].includes(t.status) ? 'recorded_logs' : 'current_route';
       t.phase = state.phase;
       t.canEnd = state.canEnd;
-      if (t.plan && t.route) {
-        t.route.name = t.plan.routeName;
-        t.route.students = t.plan.stops.filter(s => !studentFilter || s.studentId === studentId).map(s => ({
+      if (t.route) {
+        t.route.name = (!upcoming && t.plan?.routeName) || t.route.name;
+        t.route.students = state.pickupList.filter(s => !studentFilter || s.studentId === studentId).map(s => ({
           id: s.studentId, firstName: s.firstName, lastName: s.lastName, grade: s.grade,
           RouteStudent: { stopOrder: s.stopNumber },
         }));
@@ -153,7 +181,7 @@ exports.getAll = async (req, res) => {
       delete t.plan;
       return t;
     });
-    res.json({ trips: result, total: result.length });
+    res.json({ trips: result, total: result.length, schoolDate: today });
   } catch (err) {
     console.error('Failed to list trips:', err);
     res.status(500).json({ error: err.message });
@@ -173,7 +201,7 @@ exports.getDetails = async (req, res) => {
                 include: [{
                   model: Student,
                   as: 'students',
-                  attributes: ['id', 'firstName', 'lastName', 'grade'],
+                  attributes: ['id', 'firstName', 'lastName', 'grade', 'isActive'],
                   through: { attributes: ['stopOrder'] },
                   include: [{
                     model: User,
@@ -187,7 +215,10 @@ exports.getDetails = async (req, res) => {
               {
                 model: TripLog,
                 as: 'logs',
-                include: [{ model: Student, as: 'student', attributes: ['id', 'firstName', 'lastName', 'grade'] }],
+                include: [
+                  { model: Student, as: 'student', attributes: ['id', 'firstName', 'lastName', 'grade'] },
+                  { model: User, as: 'recordedBy', attributes: ['id', 'firstName', 'lastName', 'role'] },
+                ],
               },
             ],
             order: [
@@ -198,6 +229,9 @@ exports.getDetails = async (req, res) => {
           if (!trip) return res.status(404).json({ error: 'Trip not found.' });
 
           const value = trip.toJSON();
+          if (value.plan?.schoolId != null && value.plan.schoolId !== req.user.schoolId) {
+            return res.status(404).json({ error: 'Trip not found.' });
+          }
           const logs = value.logs || [];
           const state = getTripState(value);
           const pickupList = state.pickupList.map(student => ({
@@ -218,9 +252,10 @@ exports.getDetails = async (req, res) => {
               startedAt: value.startedAt,
               endedAt: value.endedAt,
               notes: value.notes,
+              rosterSource: value.plan && !['scheduled', 'delayed'].includes(value.status) ? 'trip_plan' : ['completed', 'cancelled', 'missed'].includes(value.status) ? 'recorded_logs' : 'current_route',
               route: value.route ? {
                 id: value.route.id,
-                name: value.plan?.routeName || value.route.name,
+                name: (!['scheduled', 'delayed'].includes(value.status) && value.plan?.routeName) || value.route.name,
                 type: value.route.type,
                 departureTime: value.route.departureTime,
               } : null,
@@ -259,21 +294,10 @@ exports.create = async (req, res) => {
     if (!['morning_pickup', 'afternoon_dropoff'].includes(type)) {
       return res.status(400).json({ error: 'A valid trip type is required.' });
     }
-    if (scheduledTime && !TIME_PATTERN.test(scheduledTime)) {
-      return res.status(400).json({ error: 'Scheduled time must use HH:mm format.' });
+    if (typeof scheduledTime !== 'string' || !TIME_PATTERN.test(scheduledTime)) {
+      return res.status(400).json({ error: 'A scheduled time in HH:mm format is required for every new trip.' });
     }
-
-    const route = await Route.findOne({
-      where: { id: routeId, schoolId: req.user.schoolId },
-      include: [{
-        model: Student,
-        as: 'students',
-        attributes: ['id'],
-        through: { attributes: [] },
-      }],
-    });
-    if (!route) return res.status(404).json({ error: 'Route not found.' });
-    const studentIds = route.students.map(student => student.id);
+    const normalizedTime = `${scheduledTime.slice(0, 5)}:00`;
 
     if (!recurrence) {
       let conflicts = [];
@@ -283,6 +307,7 @@ exports.create = async (req, res) => {
           replacements: { schoolId: req.user.schoolId },
           transaction,
         });
+        const { route, plan, studentIds } = await getReadyRoute(routeId, req.user.schoolId, type, transaction);
         conflicts = await findDailyStudentConflicts({
           schoolId: req.user.schoolId,
           studentIds,
@@ -290,6 +315,7 @@ exports.create = async (req, res) => {
           dates: [scheduledDate],
           transaction,
         });
+        conflicts.push(...await findResourceConflicts(route, [scheduledDate], normalizedTime, transaction));
         if (conflicts.length > 0) return;
 
         trip = await Trip.create({
@@ -298,13 +324,17 @@ exports.create = async (req, res) => {
           vehicleId: route.vehicleId,
           type,
           scheduledDate,
-          scheduledTime: scheduledTime ? `${scheduledTime.slice(0, 5)}:00` : null,
+          scheduledTime: normalizedTime,
           notes: notes || null,
           status: 'scheduled',
+          plan,
         }, { transaction });
       });
 
       if (conflicts.length > 0) {
+        if (conflicts.some(conflict => conflict.resourceConflict)) {
+          return res.status(409).json({ error: 'The driver or vehicle already has a trip at this scheduled time.', conflicts });
+        }
         const names = [...new Set(conflicts.map(conflict => conflict.studentName))];
         const direction = type === 'morning_pickup' ? 'pickup' : 'drop-off';
         return res.status(409).json({
@@ -339,12 +369,12 @@ exports.create = async (req, res) => {
     const dates = buildRecurringDates(startDate, endDate, frequency, weekdays);
     if (dates.length === 0) return res.status(400).json({ error: 'The recurrence pattern does not contain any trip dates.' });
 
-    const normalizedTime = `${scheduledTime.slice(0, 5)}:00`;
     const result = await sequelize.transaction(async transaction => {
       await sequelize.query('SELECT pg_advisory_xact_lock(:schoolId)', {
         replacements: { schoolId: req.user.schoolId },
         transaction,
       });
+      const { route, plan, studentIds } = await getReadyRoute(routeId, req.user.schoolId, type, transaction);
       const existing = await Trip.findAll({
         attributes: ['scheduledDate'],
         where: {
@@ -356,13 +386,15 @@ exports.create = async (req, res) => {
         transaction,
       });
       const existingDates = new Set(existing.map(trip => trip.scheduledDate));
+      const newDates = dates.filter(date => !existingDates.has(date));
       const conflicts = await findDailyStudentConflicts({
         schoolId: req.user.schoolId,
         studentIds,
         type,
-        dates,
+        dates: newDates,
         transaction,
       });
+      conflicts.push(...await findResourceConflicts(route, newDates, normalizedTime, transaction));
       const conflictingDates = new Set(conflicts.map(conflict => conflict.scheduledDate));
       const datesToCreate = dates.filter(date =>
         !existingDates.has(date) && !conflictingDates.has(date)
@@ -376,6 +408,7 @@ exports.create = async (req, res) => {
         scheduledTime: normalizedTime,
         notes: notes || null,
         status: 'scheduled',
+        plan,
       })), { transaction, returning: true });
       return { trips, skippedCount: dates.length - datesToCreate.length, conflicts };
     });
@@ -384,14 +417,16 @@ exports.create = async (req, res) => {
     return res.status(createdCount ? 201 : 200).json({
       message: createdCount
         ? `${createdCount} recurring ${createdCount === 1 ? 'trip' : 'trips'} scheduled.`
-        : 'All matching trips were already scheduled.',
+        : result.conflicts.length
+          ? 'No trips were scheduled because of student or resource conflicts.'
+          : 'All matching trips were already scheduled.',
       trip: result.trips[0] || null,
       trips: result.trips,
       count: createdCount,
       skippedCount: result.skippedCount,
       conflicts: result.conflicts,
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 };
 exports.startTrip = async (req, res) => {
   try {
@@ -442,7 +477,18 @@ function workflowError(res, err) {
 }
 exports.getTripLogs = async (req, res) => {
   try {
-    const logs = await TripLog.findAll({ where: { tripId: req.params.id }, include: [{ model: Student, as: 'student', attributes: ['id','firstName','lastName','grade'] }], order: [['timestamp','ASC']] });
+    const access = await getAccessibleTrip(req.params.id, req.user);
+    if (!access) return res.status(404).json({ error: 'Trip not found.' });
+    const where = { tripId: access.trip.id };
+    if (access.studentIds) where.studentId = { [Op.in]: access.studentIds };
+    const logs = await TripLog.findAll({
+      where,
+      include: [{
+        model: Student, as: 'student', attributes: ['id','firstName','lastName','grade'],
+        ...(req.user.role !== 'super_admin' && { where: { schoolId: access.trip.route.schoolId }, required: true }),
+      }],
+      order: [['timestamp','ASC']],
+    });
     res.json({ logs, total: logs.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };

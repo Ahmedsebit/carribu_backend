@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const {
   sequelize, Trip, TripLog, Route, RouteWaypoint, Student, User, Vehicle, NotificationOutbox,
 } = require('../models');
-const { buildTripPlan, validateTripPlan, validPoint, getTripState, actionPhase, assertTransition } = require('./tripPlan');
+const { buildTripPlan, buildPlanForTrip, validateTripPlan, validPoint, getTripState, actionPhase, assertTransition } = require('./tripPlan');
 const { enqueueNotification } = require('./notificationOutbox');
 const { notifyTrip } = require('../socket');
 const { isStartWindowEarly, isStartWindowLapsed, START_WINDOW_MINUTES, checkMissedTrips } = require('./tripReminders');
@@ -22,6 +22,7 @@ async function loadTrip(id, user, transaction) {
     where: { id: trip.routeId, schoolId: user.schoolId }, transaction,
   });
   if (!route) throw fail(404, 'Trip not found.');
+  if (trip.plan?.schoolId != null && trip.plan.schoolId !== route.schoolId) throw fail(404, 'Trip not found.');
   if (user.role === 'driver' && trip.driverId !== user.id) throw fail(403, 'This trip is assigned to another driver.');
   return { trip, route };
 }
@@ -46,7 +47,10 @@ async function ensureTripPlan(trip, transaction, starting = false) {
   if (trip.plan && !starting) return trip.plan;
   const route = await routeForPlan(trip.routeId, transaction);
   if (!route) throw fail(404, 'Route not found.');
-  const plan = trip.plan ? { ...trip.plan } : buildTripPlan(trip, route, route.routeWaypoints, { legacy: trip.status === 'completed' && !!trip.startedAt });
+  const logs = !starting && !trip.plan && trip.startedAt
+    ? await TripLog.findAll({ where: { tripId: trip.id }, transaction }) : [];
+  const plan = starting ? buildTripPlan(trip, route, route.routeWaypoints)
+    : buildPlanForTrip(trip, route, logs);
   if (starting) {
     const hadStudents = plan.stops.length > 0;
     const homePhase = trip.type === 'afternoon_dropoff' ? 'dropoff' : 'pickup';
@@ -54,12 +58,40 @@ async function ensureTripPlan(trip, transaction, starting = false) {
       .map((stop, index) => ({ ...stop, stopNumber: index + 1 }));
     const invalid = validateTripPlan(plan, { allowEmpty: hadStudents });
     if (invalid) throw fail(422, invalid);
-    if (route.students.some(student => student.isActive === false || student.schoolId !== route.schoolId)) {
-      throw fail(409, 'Every rostered student must be active and belong to this school.');
+    if (route.students.some(student => student.isActive !== false && student.schoolId !== route.schoolId)) {
+      throw fail(409, 'Every active rostered student must belong to this school.');
     }
   }
   await trip.update({ plan }, { transaction });
   return plan;
+}
+
+async function refreshFuturePlans(schoolId, where, transaction) {
+  const trips = await Trip.findAll({
+    where: { ...where, status: { [Op.in]: ['scheduled', 'delayed'] }, startedAt: null },
+    include: [{ model: Route, as: 'route', where: { schoolId }, required: true }],
+    transaction,
+  });
+  const future = trips.filter(trip => !isStartWindowLapsed(trip));
+  const groups = new Map();
+  for (const trip of future) {
+    const key = `${trip.routeId}:${trip.type}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(trip);
+  }
+  const routes = new Map();
+  for (const group of groups.values()) {
+    const first = group[0];
+    if (!routes.has(first.routeId)) routes.set(first.routeId, await routeForPlan(first.routeId, transaction));
+    const route = routes.get(first.routeId);
+    if (!route || route.schoolId !== schoolId) throw fail(404, 'Route not found.');
+    const plan = buildTripPlan(first, route, route.routeWaypoints);
+    await Trip.update({ plan }, {
+      where: { id: { [Op.in]: group.map(trip => trip.id) }, status: { [Op.in]: ['scheduled', 'delayed'] }, startedAt: null },
+      transaction,
+    });
+  }
+  return future.map(trip => trip.id);
 }
 
 async function withTrip(id, user, operation) {
@@ -83,10 +115,15 @@ async function startTrip(id, user) {
     if (trip.status === 'missed') throw fail(400, 'This trip missed its allowed start window.');
     if (!['scheduled', 'delayed'].includes(trip.status)) throw fail(409, 'This trip cannot be started.');
     if (isStartWindowEarly(trip)) {
-      throw fail(400, `Start this trip within ${START_WINDOW_MINUTES} minutes before or after its scheduled time.`);
+      throw fail(400, trip.scheduledTime
+        ? `Start this trip within ${START_WINDOW_MINUTES} minutes before or after its scheduled time.`
+        : 'An untimed legacy trip can only start on its scheduled school date.');
     }
     if (isStartWindowLapsed(trip)) throw fail(400, 'This trip missed its allowed start window.', { code: 'TRIP_START_WINDOW_LAPSED' });
     if (!route.isActive) throw fail(409, 'This route is inactive.');
+    if (!['both', trip.type === 'morning_pickup' ? 'morning' : 'afternoon'].includes(route.type)) {
+      throw fail(409, 'The trip direction no longer matches this route.');
+    }
     const driver = await User.findOne({
       where: { id: trip.driverId, schoolId: user.schoolId, isActive: true, role: 'driver' }, transaction,
     });
@@ -137,6 +174,10 @@ async function startTrip(id, user) {
 }
 
 async function logStudentAction(id, user, input) {
+  return withTrip(id, user, (trip, route, transaction) => recordStudentAction(trip, route, user, input, transaction));
+}
+
+async function recordStudentAction(trip, route, user, input, transaction) {
   const studentId = Number(input.studentId);
   if (!Number.isInteger(studentId) || studentId <= 0) throw fail(400, 'A valid studentId is required.');
   if (input.idempotencyKey != null && (typeof input.idempotencyKey !== 'string'
@@ -147,12 +188,17 @@ async function logStudentAction(id, user, input) {
       throw fail(400, `Invalid ${field}.`);
     }
   }
-  return withTrip(id, user, async (trip, route, transaction) => {
     await ensureTripPlan(trip, transaction);
     const logs = await TripLog.findAll({ where: { tripId: trip.id }, order: [['timestamp', 'ASC'], ['id', 'ASC']], transaction });
     const state = getTripState(trip, logs);
     const student = state.pickupList.find(s => s.studentId === studentId);
     if (!student) throw fail(404, 'Student is not in this trip roster.');
+    if (input.expectedParentId != null && student.parentId !== input.expectedParentId) {
+      throw fail(409, 'The parent linkage no longer matches the active trip snapshot. Review the student record.');
+    }
+    if (input.action === 'absent' && !['pending', 'arrived_pickup', 'absent'].includes(student.status)) {
+      throw fail(409, 'A student who has boarded or been dropped off cannot be marked absent.');
+    }
     const keyed = input.idempotencyKey && logs.find(log => log.idempotencyKey === input.idempotencyKey);
     if (keyed) {
       if (keyed.studentId !== studentId || keyed.action !== input.action || (input.phase && keyed.phase !== input.phase)) {
@@ -178,6 +224,7 @@ async function logStudentAction(id, user, input) {
       tripId: trip.id, studentId, action: input.action, phase,
       idempotencyKey: input.idempotencyKey || null,
       lat: input.lat ?? null, lng: input.lng ?? null, notes: input.notes || null, timestamp: new Date(),
+      recordedById: user.id,
     }, { transaction });
     const event = input.action === 'check_in' ? 'student-picked-up'
       : input.action === 'check_out' ? 'student-dropped-off'
@@ -193,7 +240,6 @@ async function logStudentAction(id, user, input) {
       notifyTrip(trip.id, 'trip-plan', { tripId: trip.id, phase: updated.phase });
     });
     return { log, duplicate: false, ...updated };
-  });
 }
 
 async function completeTrip(id, user) {
@@ -252,4 +298,4 @@ async function notificationDiagnostics(id, user) {
   return { events };
 }
 
-module.exports = { startTrip, logStudentAction, completeTrip, cancelTrip, notificationDiagnostics, ensureTripPlan, lockSchool };
+module.exports = { startTrip, logStudentAction, recordStudentAction, withTrip, completeTrip, cancelTrip, notificationDiagnostics, ensureTripPlan, lockSchool, refreshFuturePlans };

@@ -18,6 +18,8 @@ const TrackerEvent = require('./TrackerEvent');
 const VehicleTrackerPosition = require('./VehicleTrackerPosition');
 const NotificationOutbox = require('./NotificationOutbox');
 const StudentImport = require('./StudentImport');
+const AbsenceRequest = require('./AbsenceRequest');
+const ParentActivationInvitation = require('./ParentActivationInvitation');
 
 School.belongsTo(User, { foreignKey: 'managed_by', as: 'manager' });
 User.hasMany(School, { foreignKey: 'managed_by', as: 'managedSchools' });
@@ -82,6 +84,7 @@ Trip.hasMany(TrackerEvent, { foreignKey: 'trip_id', as: 'trackerEvents' });
 
 TripLog.belongsTo(Trip, { foreignKey: 'trip_id', as: 'trip' });
 TripLog.belongsTo(Student, { foreignKey: 'student_id', as: 'student' });
+TripLog.belongsTo(User, { foreignKey: 'recordedById', as: 'recordedBy', onDelete: 'SET NULL' });
 
 Message.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 Message.belongsTo(User, { foreignKey: 'sender_id', as: 'sender' });
@@ -108,5 +111,12 @@ Subscription.belongsTo(School, { foreignKey: 'school_id', as: 'school' });
 School.hasOne(Subscription, { foreignKey: 'school_id', as: 'subscription' });
 StudentImport.belongsTo(School, { foreignKey: 'schoolId', as: 'school', onDelete: 'CASCADE' });
 StudentImport.belongsTo(User, { foreignKey: 'uploadedBy', as: 'uploader', onDelete: 'SET NULL' });
+AbsenceRequest.belongsTo(School, { foreignKey: 'schoolId', as: 'school', onDelete: 'CASCADE' });
+AbsenceRequest.belongsTo(Student, { foreignKey: 'studentId', as: 'student', onDelete: 'CASCADE' });
+AbsenceRequest.belongsTo(User, { foreignKey: 'parentId', as: 'parent', onDelete: 'CASCADE' });
+AbsenceRequest.belongsTo(User, { foreignKey: 'reviewedById', as: 'reviewedBy', onDelete: 'SET NULL' });
+ParentActivationInvitation.belongsTo(User, { foreignKey: 'parentId', as: 'parent', onDelete: 'CASCADE' });
+ParentActivationInvitation.belongsTo(School, { foreignKey: 'schoolId', as: 'school', onDelete: 'CASCADE' });
+ParentActivationInvitation.belongsTo(User, { foreignKey: 'issuedById', as: 'issuedBy', onDelete: 'SET NULL' });
 
-module.exports = { sequelize, School, User, ParentSchool, Vehicle, Student, StudentImport, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, NotificationOutbox, AppVersion, AuditLog, Subscription };
+module.exports = { sequelize, School, User, ParentSchool, ParentActivationInvitation, Vehicle, Student, StudentImport, AbsenceRequest, Route, RouteStudent, RouteWaypoint, Trip, TripLog, Message, BusLocation, TrackerEvent, VehicleTrackerPosition, NotificationOutbox, AppVersion, AuditLog, Subscription };

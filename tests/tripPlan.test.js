@@ -1,6 +1,6 @@
 const {
   buildTripPlan, validateTripPlan, getTripState, actionPhase, assertTransition,
-  locationFreshness, estimateStopETA,
+  locationFreshness, estimateStopETA, historicalAttendance,
 } = require('../services/tripPlan');
 
 const route = {
@@ -13,6 +13,60 @@ const route = {
 const waypoints = [{ leg: 'outbound', orderIndex: 0, lat: 0, lng: 30 }, { leg: 'outbound', orderIndex: 1, lat: 4, lng: 32, label: 'School' }];
 const make = type => ({ type, status: 'in_progress', plan: buildTripPlan({ type }, route, waypoints) });
 const log = (studentId, action, phase, id = 1) => ({ id, studentId, action, phase, timestamp: new Date(id * 1000) });
+
+test('future plans exclude inactive students without mutating retained route membership', () => {
+  const students = route.students.map((student, index) => ({ ...student, isActive: index !== 0 }));
+  const plan = buildTripPlan({ type: 'morning_pickup', status: 'scheduled' }, { ...route, students }, waypoints);
+  expect(plan.stops.map(stop => stop.studentId)).toEqual([2]);
+  expect(students.map(student => student.id)).toEqual([1, 2]);
+  expect(getTripState({ status: 'completed', plan }).stats.total).toBe(1);
+});
+
+test('an inactive current student does not alter an active or completed frozen roster', () => {
+  const trip = make('morning_pickup');
+  trip.route = { ...route, students: [{ ...route.students[0], isActive: false }] };
+  expect(getTripState(trip).stats.total).toBe(2);
+  trip.status = 'completed';
+  expect(historicalAttendance(trip).expected).toBe(2);
+});
+
+test('upcoming trips use current eligible students and parent links while keeping their historical snapshot', () => {
+  const trip = { ...make('morning_pickup'), status: 'scheduled', route: {
+    ...route, students: [{ ...route.students[0], parentId: 99, parent: { id: 99 }, firstName: 'Updated' },
+      { ...route.students[1], isActive: false }],
+  } };
+  expect(getTripState(trip).pickupList).toEqual([expect.objectContaining({ studentId: 1, parentId: 99, firstName: 'Updated' })]);
+  expect(trip.plan.stops.length).toBe(2);
+  expect(getTripState({ ...trip, status: 'missed' }).stats.total).toBe(2);
+});
+
+test('arrival counts once as not boarded, and unrelated logs do not alter snapshot totals', () => {
+  const trip = make('morning_pickup');
+  trip.logs = [log(1, 'arrived', 'pickup'), log(99, 'check_in', 'pickup')];
+  expect(historicalAttendance(trip)).toMatchObject({ expected: 2, boarded: 0, notBoarded: 2, rosterSource: 'trip_plan' });
+});
+
+test('legacy history uses unique recorded students, not a subsequently edited route roster', () => {
+  const trip = { type: 'morning_pickup', status: 'completed', logs: [
+    log(1, 'check_in', 'pickup'), log(1, 'check_out', 'dropoff', 2), log(77, 'absent', 'pickup', 3),
+  ] };
+  const original = historicalAttendance(trip, route.students);
+  expect(original).toMatchObject({ expected: 2, boarded: 1, droppedOff: 1, absent: 1, notBoarded: 0, rosterSource: 'recorded_logs' });
+  expect(historicalAttendance(trip, [{ id: 999 }])).toEqual(original);
+  expect(getTripState({ ...trip, route: { students: [] } }).stats.total).toBe(2);
+});
+
+test('legacy afternoon drop-off records are counted as transported without inventing unlogged students', () => {
+  const trip = { type: 'afternoon_dropoff', status: 'completed', startedAt: new Date(), logs: [log(1, 'check_out', 'dropoff')] };
+  expect(historicalAttendance(trip, route.students)).toMatchObject({ expected: 1, boarded: 1, droppedOff: 1, notBoarded: 0 });
+});
+
+test('missed trip history preserves its scheduled snapshot, while older unsnapshotted totals remain explicitly unknown', () => {
+  const trip = { ...make('morning_pickup'), status: 'missed' };
+  expect(historicalAttendance(trip, []).expected).toBe(2);
+  delete trip.plan;
+  expect(historicalAttendance(trip, route.students)).toMatchObject({ expected: 0, rosterSource: 'recorded_logs' });
+});
 
 test('morning plan preserves zero coordinates and uses the final school waypoint', () => {
   const trip = make('morning_pickup');

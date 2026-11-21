@@ -4,6 +4,7 @@ const { sequelize, Trip, TripLog, Message, NotificationOutbox } = require('../mo
 const { startTrip } = require('../services/tripWorkflow');
 const { enqueueNotification, processNotificationOutbox, deliveryState } = require('../services/notificationOutbox');
 const { deliverOutboxPush } = require('../services/push');
+const { schoolDate } = require('../services/tripReminders');
 
 let data, actor, trip;
 beforeAll(async () => {
@@ -26,7 +27,7 @@ beforeEach(async () => {
   await data.student1.update({ parentId: data.parent.id });
   trip = await Trip.create({
     routeId: data.route.id, driverId: data.driver.id, vehicleId: data.vehicle.id,
-    type: 'morning_pickup', scheduledDate: '2026-10-30',
+    type: 'morning_pickup', scheduledDate: schoolDate(),
   });
   await startTrip(trip.id, actor);
   await trip.reload();

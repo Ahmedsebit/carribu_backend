@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { User, Vehicle, Route, School, Trip, TripLog, Student, sequelize } = require('../models');
 const { Op } = require('sequelize');
+const { historicalAttendance } = require('../services/tripPlan');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../utils/email');
 const { normalizePhoneE164 } = require('../utils/phone');
 
@@ -63,7 +64,7 @@ exports.getTripHistory = async (req, res) => {
           include: [{
             model: Student,
             as: 'students',
-            attributes: ['id'],
+            attributes: ['id', 'isActive'],
             through: { attributes: [] },
           }],
         },
@@ -75,10 +76,7 @@ exports.getTripHistory = async (req, res) => {
 
     const trips = rows.map(row => {
       const trip = row.toJSON();
-      const expected = trip.route?.students?.length || 0;
-      const boarded = new Set(trip.logs.filter(log => log.action === 'check_in').map(log => log.studentId)).size;
-      const droppedOff = new Set(trip.logs.filter(log => log.action === 'check_out').map(log => log.studentId)).size;
-      const absent = new Set(trip.logs.filter(log => log.action === 'absent').map(log => log.studentId)).size;
+      const attendance = historicalAttendance(trip, trip.route?.students);
       const durationMinutes = trip.startedAt && trip.endedAt
         ? Math.max(0, Math.round((new Date(trip.endedAt) - new Date(trip.startedAt)) / 60000))
         : null;
@@ -93,13 +91,7 @@ exports.getTripHistory = async (req, res) => {
         durationMinutes,
         route: trip.route ? { id: trip.route.id, name: trip.route.name } : null,
         vehicle: trip.vehicle,
-        attendance: {
-          expected,
-          boarded,
-          droppedOff,
-          absent,
-          notBoarded: Math.max(0, expected - boarded - absent),
-        },
+        attendance,
       };
     });
 
