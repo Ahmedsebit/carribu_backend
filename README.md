@@ -13,16 +13,38 @@ School transport management API built with Express.js, Sequelize (PostgreSQL), a
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Node.js |
-| Framework | Express.js |
-| Database | PostgreSQL |
-| ORM | Sequelize |
-| Auth | JWT (jsonwebtoken + bcryptjs) |
-| Real-time | Socket.IO |
-| Validation | express-validator |
-| Security | Helmet, CORS |
+| Layer      | Technology                    |
+| ---------- | ----------------------------- |
+| Runtime    | Node.js                       |
+| Framework  | Express.js                    |
+| Database   | PostgreSQL                    |
+| ORM        | Sequelize                     |
+| Auth       | JWT (jsonwebtoken + bcryptjs) |
+| Real-time  | Socket.IO                     |
+| Validation | express-validator             |
+| Security   | Helmet, CORS                  |
+
+## Code quality and pre-commit checks
+
+Development quality tooling requires **Node.js 20.17+** and Git. Run `npm install`
+in this repository to activate the versioned Husky hook; run `npm run prepare`
+to reactivate it after a checkout. Installation skips hook setup in CI, production,
+with `--omit=dev`, `HUSKY=0`, or without Git metadata.
+
+Every commit checks staged paths/content for recognizable credentials, merge
+markers, generated artifacts and symlinks, then formats staged files with
+Prettier and runs ESLint with zero warnings. The final index is checked again
+for credentials and whitespace. Partial staging and unstaged edits are preserved.
+Credential diagnostics never print matched values. This lightweight guard is not
+a complete secret scanner; use placeholders in `.env.example`, never real keys.
+
+Use `npm run precommit` to check the current staged changes, `npm run lint` and
+`npm run format:check` for full-repository checks, and `npm run format` only when
+you intentionally want to format the whole repository. Existing files have not
+been reformatted or declared lint-clean; fix findings when editing them.
+`npm run test:quality` tests the hook in disposable Git repositories without
+starting the app or touching a database. Application tests and builds remain
+separate from commits. Local hooks can be bypassed and are not CI enforcement.
 
 ## Prerequisites
 
@@ -55,22 +77,22 @@ cp .env.example .env
 
 **`.env` variables:**
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | `5000` |
-| `NODE_ENV` | Environment (`development` / `production` / `test`) | `development` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_NAME` | Database name | `school_transport` |
-| `DB_USER` | Database user | `postgres` |
-| `DB_PASSWORD` | Database password | `postgres` |
-| `JWT_SECRET` | Secret key for JWT signing | — |
-| `JWT_EXPIRES_IN` | Token expiry duration | `7d` |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery | — |
-| `TRACCAR_ENABLED` | Enable Traccar one-minute location polling and live WebSocket updates | `false` |
-| `TRACCAR_URL` | Your hosted Traccar server address (HTTPS, optionally ending in `/api`) | — |
-| `TRACCAR_TOKEN` | Traccar account token, stored only in backend deployment secrets | — |
-| `TRACKER_WEBHOOK_TOKEN` | Shared secret for Traccar position/event forwarding | — |
+| Variable                        | Description                                                             | Default            |
+| ------------------------------- | ----------------------------------------------------------------------- | ------------------ |
+| `PORT`                          | Server port                                                             | `5000`             |
+| `NODE_ENV`                      | Environment (`development` / `production` / `test`)                     | `development`      |
+| `DB_HOST`                       | PostgreSQL host                                                         | `localhost`        |
+| `DB_PORT`                       | PostgreSQL port                                                         | `5432`             |
+| `DB_NAME`                       | Database name                                                           | `school_transport` |
+| `DB_USER`                       | Database user                                                           | `postgres`         |
+| `DB_PASSWORD`                   | Database password                                                       | `postgres`         |
+| `JWT_SECRET`                    | Secret key for JWT signing                                              | —                  |
+| `JWT_EXPIRES_IN`                | Token expiry duration                                                   | `7d`               |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for native Android FCM delivery           | —                  |
+| `TRACCAR_ENABLED`               | Enable Traccar one-minute location polling and live WebSocket updates   | `false`            |
+| `TRACCAR_URL`                   | Your hosted Traccar server address (HTTPS, optionally ending in `/api`) | —                  |
+| `TRACCAR_TOKEN`                 | Traccar account token, stored only in backend deployment secrets        | —                  |
+| `TRACKER_WEBHOOK_TOKEN`         | Shared secret for Traccar position/event forwarding                     | —                  |
 
 Expo push delivery works without Firebase configuration. To enable native
 Android notifications, set `FIREBASE_SERVICE_ACCOUNT_JSON` as a secret in the
@@ -118,7 +140,7 @@ migrations in `migrations/`, tracked in the `sequelize_meta` table.
 
 - **On startup** the server runs all pending migrations before listening.
 - **Existing databases** created before migrations existed (via the old
-  `sequelize.sync`) are detected automatically and *baselined* — the baseline
+  `sequelize.sync`) are detected automatically and _baselined_ — the baseline
   migration is recorded as already applied so your data is never dropped.
 
 ### Commands
@@ -138,7 +160,8 @@ Create `migrations/000N-description.js` exporting `up`/`down`:
 module.exports = {
   async up({ context: queryInterface }) {
     await queryInterface.addColumn('users', 'nickname', {
-      type: require('sequelize').DataTypes.STRING, allowNull: true,
+      type: require('sequelize').DataTypes.STRING,
+      allowNull: true,
     });
   },
   async down({ context: queryInterface }) {
@@ -253,12 +276,12 @@ XLSX archives are also limited to 25 MB of expanded content.
 The first row contains headers; each subsequent non-empty row is one student.
 Use **Download template** in the import screen to obtain the CSV headers.
 
-| Columns | Rule |
-|---|---|
-| `Admission Number` | Required for every student; matched case-insensitively within the current school |
-| `First Name`, `Last Name` | Required, or use one `Student Name` column containing both parts |
-| `Grade` | Optional; omitting the column preserves the existing grade; an empty cell clears it |
-| `Parent Name`, `Parent Phone` | Optional pair of columns; both row values are required when either is populated |
+| Columns                       | Rule                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------- |
+| `Admission Number`            | Required for every student; matched case-insensitively within the current school    |
+| `First Name`, `Last Name`     | Required, or use one `Student Name` column containing both parts                    |
+| `Grade`                       | Optional; omitting the column preserves the existing grade; an empty cell clears it |
+| `Parent Name`, `Parent Phone` | Optional pair of columns; both row values are required when either is populated     |
 
 Headers also accept camelCase/snake_case spellings, `Admission No`,
 `Grade/Class`, `Class`, `Child Name`, `Child(ren)` and `Phone Number`.
@@ -329,30 +352,30 @@ Use the **Authorize** button in Swagger UI to enter your JWT token (`Bearer <tok
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api` | API info |
-| POST | `/api/auth/register` | Register user |
-| POST | `/api/auth/login` | Login |
-| * | `/api/schools` | School CRUD |
-| * | `/api/vehicles` | Vehicle CRUD |
-| GET | `/api/vehicles/:id/location` | Latest authoritative location for the vehicle's active trip (school admin/coordinator only) |
-| * | `/api/students` | Student CRUD |
-| * | `/api/routes` | Route CRUD |
-| * | `/api/trips` | Trip management |
-| * | `/api/messages` | Messaging |
-| * | `/api/location` | Location updates |
-| * | `/api/driver` | Driver-specific actions |
-| * | `/api/drivers` | Driver management |
-| * | `/api/parents` | Parent-specific actions |
-| POST | `/api/import/preview` | Validate CSV/Excel and save a preview |
-| POST | `/api/import/parents-students` | Confirm a saved preview by importId |
-| GET | `/api/import/history` | Paginated upload history for the school |
-| GET | `/api/import/:id` | Saved preview or import row results |
-| GET | `/api/import/:id/download` | Download the original uploaded file |
-| POST | `/tracker/position` | Receive a Traccar JSON position |
-| POST | `/tracker/event` | Receive a Traccar JSON event |
+| Method | Endpoint                       | Description                                                                                 |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| GET    | `/api/health`                  | Health check                                                                                |
+| GET    | `/api`                         | API info                                                                                    |
+| POST   | `/api/auth/register`           | Register user                                                                               |
+| POST   | `/api/auth/login`              | Login                                                                                       |
+| *      | `/api/schools`                 | School CRUD                                                                                 |
+| *      | `/api/vehicles`                | Vehicle CRUD                                                                                |
+| GET    | `/api/vehicles/:id/location`   | Latest authoritative location for the vehicle's active trip (school admin/coordinator only) |
+| *      | `/api/students`                | Student CRUD                                                                                |
+| *      | `/api/routes`                  | Route CRUD                                                                                  |
+| *      | `/api/trips`                   | Trip management                                                                             |
+| *      | `/api/messages`                | Messaging                                                                                   |
+| *      | `/api/location`                | Location updates                                                                            |
+| *      | `/api/driver`                  | Driver-specific actions                                                                     |
+| *      | `/api/drivers`                 | Driver management                                                                           |
+| *      | `/api/parents`                 | Parent-specific actions                                                                     |
+| POST   | `/api/import/preview`          | Validate CSV/Excel and save a preview                                                       |
+| POST   | `/api/import/parents-students` | Confirm a saved preview by importId                                                         |
+| GET    | `/api/import/history`          | Paginated upload history for the school                                                     |
+| GET    | `/api/import/:id`              | Saved preview or import row results                                                         |
+| GET    | `/api/import/:id/download`     | Download the original uploaded file                                                         |
+| POST   | `/tracker/position`            | Receive a Traccar JSON position                                                             |
+| POST   | `/tracker/event`               | Receive a Traccar JSON event                                                                |
 
 ## Traccar GPS integration
 
@@ -513,20 +536,20 @@ Connect with a valid JWT token:
 import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:5000', {
-  auth: { token: 'your-jwt-token' }
+  auth: { token: 'your-jwt-token' },
 });
 ```
 
 ### Events
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `join-trip` | Client → Server | Driver joins a trip room |
-| `track-trip` | Client → Server | Parent subscribes to trip updates |
-| `driver-location` | Client → Server | Driver sends GPS coordinates |
+| Event             | Direction       | Description                         |
+| ----------------- | --------------- | ----------------------------------- |
+| `join-trip`       | Client → Server | Driver joins a trip room            |
+| `track-trip`      | Client → Server | Parent subscribes to trip updates   |
+| `driver-location` | Client → Server | Driver sends GPS coordinates        |
 | `location-update` | Server → Client | Broadcast location to trip watchers |
-| `chat-message` | Client → Server | Send a chat message |
-| `new-message` | Server → Client | Receive a chat message |
+| `chat-message`    | Client → Server | Send a chat message                 |
+| `new-message`     | Server → Client | Receive a chat message              |
 
 ## Testing
 
@@ -553,11 +576,13 @@ npm run test:socket      # Socket.IO tests
 ### Test database setup
 
 Tests use the same database configured in `.env`. The test setup (`tests/setup.js`) will:
+
 1. Connect to the database
 2. Force-sync all tables (drops and recreates)
 3. Seed test data (school, users, vehicles, students, routes)
 
 > ⚠️ **Warning:** Tests will drop all tables. Use a separate database for testing if needed:
+>
 > ```bash
 > createdb school_transport_test
 > DB_NAME=school_transport_test npm test
@@ -605,11 +630,11 @@ carribu_backend/
 
 ## User Roles
 
-| Role | Permissions |
-|------|-------------|
-| **Admin** | Full CRUD on schools, vehicles, routes, students, drivers |
+| Role       | Permissions                                                  |
+| ---------- | ------------------------------------------------------------ |
+| **Admin**  | Full CRUD on schools, vehicles, routes, students, drivers    |
 | **Driver** | Start/end trips, send location updates, view assigned routes |
-| **Parent** | Track trips, view student info, message drivers |
+| **Parent** | Track trips, view student info, message drivers              |
 
 ## License
 

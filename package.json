@@ -2,6 +2,12 @@
   "name": "school-transport-backend",
   "version": "2.0.0",
   "scripts": {
+    "prepare": "node scripts/setup-hooks.cjs",
+    "precommit": "node scripts/precommit.cjs",
+    "lint": "node scripts/lint.cjs .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:quality": "node --test scripts/precommit.test.cjs",
     "start": "node server.js",
     "dev": "nodemon server.js",
     "db:seed": "node seeders/seed.js",
@@ -46,10 +52,30 @@
     "yauzl": "^3.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.10.1",
     "@jest/globals": "^30.4.1",
     "jest": "^30.4.2",
     "nodemon": "^3.0.2",
     "socket.io-client": "^4.8.3",
     "supertest": "^7.2.2"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "all",
+    "printWidth": 100,
+    "endOfLine": "lf"
+  },
+  "lint-staged": {
+    "*.{js,jsx,cjs,mjs}": [
+      "prettier --write",
+      "node scripts/lint.cjs"
+    ],
+    "*.{json,jsonc,css,scss,md,mdx,yaml,yml,html}": "prettier --write"
   }
 }

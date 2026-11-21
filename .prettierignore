@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+uploads/
+android/
+ios/
+.husky/
+package-lock.json
+.env
+.env.*
+**/*service-account*.json
+**/*adminsdk*.json
+**/*credentials*.json
+**/*.min.js
